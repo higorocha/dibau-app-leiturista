@@ -36,3 +36,27 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Android
+android/.gradle/
+android/app/build/
+*.iml
+.idea/
+.gradle/
+local.properties
+
+# iOS
+ios/Pods/
+ios/build/
+ios/DerivedData/
+*.xcworkspace
+*.xcuserstate
+*.pbxuser
+*.xcodeproj/project.xcworkspace/
+xcuserdata/
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
