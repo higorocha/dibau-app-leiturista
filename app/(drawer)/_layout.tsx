@@ -1,10 +1,11 @@
 // app/(drawer)/_layout.tsx
-import React from 'react';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Drawer } from 'expo-router/drawer';
-import { DrawerToggleButton } from '@react-navigation/drawer';
-import { useTheme } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
+import React from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Drawer } from "expo-router/drawer";
+import { DrawerToggleButton } from "@react-navigation/drawer";
+import { useTheme } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+import CustomDrawerContent from "@/src/components/drawer/CustomDrawerContent";
 
 export default function DrawerLayout() {
   const { colors } = useTheme();
@@ -12,16 +13,17 @@ export default function DrawerLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <Drawer
+        drawerContent={(props) => <CustomDrawerContent {...props} />}
         screenOptions={{
           // estilo do header das telas dentro do drawer
           headerStyle: { backgroundColor: colors.card },
-          headerTintColor: '#fff',
+          headerTintColor: "#fff",
           // coloca o botão de abrir/fechar drawer
           headerLeft: () => <DrawerToggleButton tintColor="#fff" />,
           // estilo da gaveta
           drawerStyle: { backgroundColor: colors.background },
-          drawerActiveTintColor: '#33c05ff0',
-          drawerInactiveTintColor: '#999',
+          drawerActiveTintColor: "#33c05ff0",
+          drawerInactiveTintColor: "#999",
           // ícones e labels brancos por padrão
           drawerLabelStyle: { color: colors.text },
           headerShown: false,
@@ -37,8 +39,19 @@ export default function DrawerLayout() {
             ),
           }}
         />
+        
+        {/* Nova opção Leituras */}
+        <Drawer.Screen
+          name="leituras"
+          options={{
+            title: 'Leituras',
+            drawerIcon: ({ size, color }) => (
+              <Ionicons name="water-outline" size={size} color={color} />
+            ),
+          }}
+        />
 
-        {/* Adicione aqui outras telas do drawer */}
+        {/* Perfil */}
         <Drawer.Screen
           name="profile"
           options={{

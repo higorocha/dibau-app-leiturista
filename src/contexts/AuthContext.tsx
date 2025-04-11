@@ -76,7 +76,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const response = await api.post('/usuarios/login', { email, senha });
       const { token, user } = response.data;
-
+  
+      // Garantir que estamos recebendo o ultimoAcesso no objeto do usuário
       await AsyncStorage.setItem('dibau_token', token);
       await AsyncStorage.setItem('dibau_user', JSON.stringify(user));
       
