@@ -6,15 +6,11 @@ import {
   Text,
   StyleSheet,
   Image,
-  ScrollView,
   TouchableOpacity,
   Dimensions,
   Platform,
 } from "react-native";
-import {
-  DrawerContentScrollView,
-  DrawerItemList,
-} from "@react-navigation/drawer";
+import { DrawerContentScrollView } from "@react-navigation/drawer";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { useTheme } from "@react-navigation/native";
@@ -107,7 +103,38 @@ const CustomDrawerContent = (props: any) => {
           {...props}
           contentContainerStyle={styles.drawerScrollContent}
         >
-          <DrawerItemList {...props} />
+          {/* Opções de menu estilizadas */}
+          <View style={styles.menuContainer}>
+            {/* Item Início */}
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                props.navigation.navigate("(tabs)", { screen: "index" });
+                props.navigation.closeDrawer();
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="home-outline" size={24} color="#008bac" />
+              </View>
+              <Text style={styles.menuText}>Início</Text>
+            </TouchableOpacity>
+
+            {/* Item Leituras */}
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                props.navigation.navigate("(tabs)", { screen: "leituras" });
+                props.navigation.closeDrawer();
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="water-outline" size={24} color="#008bac" />
+              </View>
+              <Text style={styles.menuText}>Leituras</Text>
+            </TouchableOpacity>
+          </View>
         </DrawerContentScrollView>
 
         {/* Botão de Sair (agora posicionado no final da área flexível) */}
@@ -165,18 +192,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#008bac99",
     alignItems: "center",
   },
-  logo: {
-    width: isTablet ? 120 : 100,
-    height: isTablet ? 70 : 60,
-    marginBottom: 8,
-  },
-  title: {
-    fontSize: isTablet ? 20 : 16,
-    fontWeight: "bold",
-    color: "white",
-    marginBottom: 20,
-    textAlign: "center",
-  },
   avatarContainer: {
     marginBottom: 12,
   },
@@ -214,20 +229,51 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.7)",
     marginLeft: 4,
   },
-  // Novo container flexível para o conteúdo principal
   drawerContentContainer: {
     flex: 1,
-    justifyContent: "space-between", // Coloca espaço entre a lista e o botão sair
+    justifyContent: "space-between",
   },
   drawerScrollContent: {
-    paddingTop: 8,
+    paddingTop: 16,
   },
-  // Estilo do botão de logout
+  menuContainer: {
+    paddingHorizontal: 12,
+    marginBottom: 16,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f0f0f0",
+    borderRadius: 12,
+    marginBottom: 12,
+    padding: 12,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  menuIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0, 139, 172, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  menuText: {
+    fontSize: isTablet ? 16 : 14,
+    color: "#333333",
+    fontWeight: "500",
+  },
   logoutButton: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 15,
-    paddingHorizontal: 20,
+    padding: 16,
     borderTopWidth: 0.5,
     borderTopColor: "#f0f0f0",
     marginBottom: 8,
@@ -241,28 +287,28 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
-    alignItems: 'center',
+    borderTopColor: "#f0f0f0",
+    alignItems: "center",
   },
   footerText: {
     fontSize: isTablet ? 14 : 12,
-    color: '#666',
+    color: "#666",
     marginBottom: 16,
-    textAlign: 'center',
+    textAlign: "center",
   },
   logosContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
   logoWrapper: {
-    alignItems: 'center',
+    alignItems: "center",
     paddingHorizontal: 12,
   },
   logoText: {
     fontSize: isTablet ? 12 : 10,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "bold",
+    color: "#333",
     marginBottom: 4,
   },
   footerLogo: {
@@ -272,7 +318,7 @@ const styles = StyleSheet.create({
   divider: {
     height: isTablet ? 30 : 24,
     width: 1,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: "#e0e0e0",
     marginHorizontal: 12,
   },
 });

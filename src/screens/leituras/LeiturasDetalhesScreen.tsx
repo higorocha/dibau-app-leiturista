@@ -23,6 +23,8 @@ import api from "../../api/axiosConfig";
 import MaskedNumberInput from "../../components/inputs/MaskedNumberInput";
 import { formatarNumeroComMilhar, formatarData } from "../../utils/formatters";
 import { useTheme } from "@react-navigation/native";
+import { useRef } from "react";
+import { Animated } from "react-native";
 
 // Verificar se é tablet
 const { width } = Dimensions.get("window");
@@ -79,6 +81,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
   const [valoresOriginais, setValoresOriginais] = useState<{
     [key: number]: string;
   }>({});
+  const flatListRef = useRef<FlatList>(null);
 
   // Inicializar os estados com os dados existentes
   useEffect(() => {
@@ -431,7 +434,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         <View style={[styles.header, { backgroundColor: colors.card }]}>
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.back()}
+            onPress={() => router.replace('/(drawer)/(tabs)/leituras')} // Alteração aqui
           >
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
@@ -442,6 +445,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         </View>
 
         <FlatList
+          ref={flatListRef}
           data={faturasSelecionadas}
           renderItem={renderItem}
           keyExtractor={(item) => item.id.toString()}
@@ -452,6 +456,13 @@ const LeiturasDetalhesScreen: React.FC = () => {
             </View>
           }
         />
+        {/* Adicione este botão flutuante */}
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        >
+          <Ionicons name="arrow-down" size={24} color="white" />
+        </TouchableOpacity>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -699,6 +710,25 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: "#999",
+  },
+
+  //Botão flutuante
+  fab: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: '#2a9d8f',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    zIndex: 1,
   },
 });
 

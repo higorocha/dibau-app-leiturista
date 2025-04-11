@@ -1,4 +1,4 @@
-// app/(tabs)/_layout.tsx
+// app/(drawer)/(tabs)/_layout.tsx
 import { Tabs } from "expo-router";
 import React from "react";
 import { Platform } from "react-native";
@@ -20,25 +20,22 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        // fundo da barra de abas
         tabBarStyle: { backgroundColor: "#008bac99" },
-        // ícones e textos sempre brancos
         tabBarActiveTintColor: "#ffffff",
         tabBarInactiveTintColor: "#ffffff",
-        // oculta cabeçalhos internos das telas de aba
+        // Importante: não mostrar o botão de voltar, apenas o do drawer
         headerShown: true,
         headerLeft: () => <DrawerToggleButton tintColor="#fff" />,
         headerTintColor: "#fff",
       }}
     >
       <Tabs.Screen
-        name="index"
+        name="index" // Isso corresponderá a /index
         options={{
           title: "Lotes Agrícolas",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="map-outline" size={size} color={color} />
           ),
-          
         }}
       />
       <Tabs.Screen
@@ -50,7 +47,6 @@ export default function TabLayout() {
           ),
         }}
       />
-      {/* Outras abas podem ser adicionadas aqui no futuro */}
     </Tabs>
   );
 }

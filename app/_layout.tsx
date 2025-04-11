@@ -10,10 +10,11 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import "react-native-reanimated";
-
+import Toast from 'react-native-toast-message';
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { AuthProvider } from "@/src/contexts/AuthContext";
 import { LeiturasProvider } from "@/src/contexts/LeiturasContext"; // Importar o Provider
+
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -43,6 +44,7 @@ export default function RootLayout() {
         <ThemeProvider value={navTheme}>
           <Slot />
           <StatusBar style="auto" />
+          <Toast />
         </ThemeProvider>
       </LeiturasProvider>
     </AuthProvider>

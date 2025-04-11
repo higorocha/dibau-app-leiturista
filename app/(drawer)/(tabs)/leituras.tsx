@@ -1,7 +1,17 @@
-// app/(tabs)/leituras.tsx
+// app/(drawer)/(tabs)/leituras.tsx
 import React from 'react';
+import { Stack } from 'expo-router';
 import LeiturasScreen from '@/src/screens/leituras/LeiturasScreen';
 
 export default function TabLeiturasScreen() {
-  return <LeiturasScreen />;
+  return (
+    <>
+      <Stack.Screen 
+        options={{
+          title: "Leituras",
+        }}
+      />
+      <LeiturasScreen />
+    </>
+  );
 }

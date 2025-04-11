@@ -8,7 +8,7 @@ const currentEnv: Environment = 'development'; // Mude para 'production' ao publ
 
 // URLs para cada ambiente
 const config = {
-  development: 'http://192.168.1.160:5001', // Seu IP local
+  development: 'http://192.168.1.144:5001', // Seu IP local
   production: 'https://sistema-irrigacao-backend.onrender.com',
   test: 'http://localhost:5001'
 };

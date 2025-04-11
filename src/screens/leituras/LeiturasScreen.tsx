@@ -45,6 +45,7 @@ interface LeituraMensal {
   leiturasInformadas: number;
   totalLeituras: number;
   faturas: Fatura[];
+  isAllFechada: boolean;
 }
 
 const LeiturasScreen: React.FC = () => {
@@ -132,6 +133,7 @@ const LeiturasScreen: React.FC = () => {
               leiturasInformadas,
               totalLeituras: grupo.faturas?.length || 0,
               faturas: grupo.faturas || [],
+              isAllFechada: grupo.faturas?.every((f: Fatura) => f.fechada === "Sim") || false,
             });
           });
 
@@ -196,6 +198,7 @@ const LeiturasScreen: React.FC = () => {
                 leiturasInformadas,
                 totalLeituras: grupo.faturas?.length || 0,
                 faturas: grupo.faturas || [],
+                isAllFechada: grupo.faturas?.every((f: Fatura) => f.fechada === "Sim") || false,
               };
             });
 
@@ -289,6 +292,7 @@ const LeiturasScreen: React.FC = () => {
               dataCriacao={item.dataCriacao}
               faturas={item.faturas}
               onPress={() => handleCardPress(item)}
+              isAllFechada={item.isAllFechada}
             />
           )}
           contentContainerStyle={styles.listContent}
