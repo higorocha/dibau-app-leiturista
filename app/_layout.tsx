@@ -1,3 +1,4 @@
+// app/_layout.tsx
 import { ThemeProvider } from "@react-navigation/native";
 import {
   LightNavigationTheme,

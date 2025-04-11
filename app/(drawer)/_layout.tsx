@@ -24,6 +24,7 @@ export default function DrawerLayout() {
           drawerInactiveTintColor: '#999',
           // ícones e labels brancos por padrão
           drawerLabelStyle: { color: colors.text },
+          headerShown: false,
         }}
       >
         {/* Essa rota abre seu layout de abas */}

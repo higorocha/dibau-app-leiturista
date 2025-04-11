@@ -267,16 +267,6 @@ const LeiturasScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Cabeçalho */}
-      <View style={[styles.header, { backgroundColor: colors.card }]}>
-        <View>
-          <Text style={styles.headerTitle}>Leituras de Consumo</Text>
-          <Text style={styles.headerSubtitle}>
-            {user?.nome ? `Olá, ${user.nome.split(" ")[0]}` : "Bem-vindo"}
-          </Text>
-        </View>
-      </View>
-
       {/* Mensagem de erro, caso exista */}
       {error ? <ErrorMessage error={error} visible={!!error} /> : null}
 

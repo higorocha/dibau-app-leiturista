@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useAuth } from "@/src/contexts/AuthContext";
+import { DrawerToggleButton } from "@react-navigation/drawer";
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -25,16 +26,19 @@ export default function TabLayout() {
         tabBarActiveTintColor: "#ffffff",
         tabBarInactiveTintColor: "#ffffff",
         // oculta cabeçalhos internos das telas de aba
-        headerShown: false,
+        headerShown: true,
+        headerLeft: () => <DrawerToggleButton tintColor="#fff" />,
+        headerTintColor: "#fff",
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: "Lotes",
+          title: "Lotes Agrícolas",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="map-outline" size={size} color={color} />
           ),
+          
         }}
       />
       <Tabs.Screen
