@@ -19,7 +19,12 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? "light"].tint,
+        // fundo da barra de abas
+        tabBarStyle: { backgroundColor: "#008bac99" },
+        // ícones e textos sempre brancos
+        tabBarActiveTintColor: "#ffffff",
+        tabBarInactiveTintColor: "#ffffff",
+        // oculta cabeçalhos internos das telas de aba
         headerShown: false,
       }}
     >

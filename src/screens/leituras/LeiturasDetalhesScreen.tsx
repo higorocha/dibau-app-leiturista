@@ -22,6 +22,7 @@ import { useLeiturasContext } from "../../contexts/LeiturasContext";
 import api from "../../api/axiosConfig";
 import MaskedNumberInput from "../../components/inputs/MaskedNumberInput";
 import { formatarNumeroComMilhar, formatarData } from "../../utils/formatters";
+import { useTheme } from "@react-navigation/native";
 
 // Verificar se é tablet
 const { width } = Dimensions.get("window");
@@ -57,6 +58,8 @@ interface Fatura {
 }
 
 const LeiturasDetalhesScreen: React.FC = () => {
+  const { colors } = useTheme();
+
   // Obtendo os dados do contexto
   const { faturasSelecionadas, mesAnoSelecionado, setFaturasSelecionadas } =
     useLeiturasContext();
@@ -425,7 +428,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
       >
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.card }]}>
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.back()}
