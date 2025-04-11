@@ -8,6 +8,8 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider } from '@/src/contexts/AuthContext';
+import { LeiturasProvider } from '@/src/contexts/LeiturasContext'; // Importar o Provider
+
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -30,15 +32,18 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
+      <LeiturasProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <Stack>
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="LeiturasDetalhes" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" options={{ title: 'Página não encontrada' }} />
         </Stack>
         <StatusBar style="auto" />
       </ThemeProvider>
+      </LeiturasProvider>
     </AuthProvider>
   );
 }
