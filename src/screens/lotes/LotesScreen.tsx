@@ -93,10 +93,18 @@ const LotesScreen: React.FC = () => {
     }
   };
 
+  const categoriaLabels: Record<string, string> = {
+    Colono: "Colono",
+    Tecnico: "Técnico",
+    Empresarial: "Empresarial",
+    Adjacente: "Adjacente",
+  };
+
   const renderItem = ({ item }: { item: Lote }) => {
     // Verificar se item.Cliente existe
     const clienteNome = item.Cliente?.nome || "Cliente não informado";
-    const categoria = item.categoria || "Sem categoria";
+    const rawCategoria = item.categoria || "Sem categoria";
+    const categoria = categoriaLabels[rawCategoria] || rawCategoria;
 
     return (
       <TouchableOpacity
@@ -111,7 +119,7 @@ const LotesScreen: React.FC = () => {
           <View
             style={[
               styles.categoriaBadge,
-              { backgroundColor: getCategoriaColor(categoria) },
+              { backgroundColor: getCategoriaColor(rawCategoria) },
             ]}
           >
             <Text style={styles.categoriaText}>{categoria}</Text>
@@ -119,7 +127,7 @@ const LotesScreen: React.FC = () => {
         </View>
 
         <View style={styles.cardBody}>
-          <Text style={styles.clienteNome}>Responsável: {clienteNome}</Text>
+          <Text style={styles.clienteNome}>Irrigante: {clienteNome}</Text>
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Área Total:</Text>

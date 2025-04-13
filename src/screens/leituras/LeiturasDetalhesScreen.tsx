@@ -1,5 +1,5 @@
 // src/screens/leituras/LeiturasDetalhesScreen.tsx
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   Platform,
   Dimensions,
   TextInput,
+  Animated,
+  NativeModules,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,13 +26,13 @@ import api from "../../api/axiosConfig";
 import MaskedNumberInput from "../../components/inputs/MaskedNumberInput";
 import { formatarNumeroComMilhar, formatarData } from "../../utils/formatters";
 import { useTheme } from "@react-navigation/native";
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import Toast from 'react-native-toast-message';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import Toast from "react-native-toast-message";
+import DatePicker from 'react-native-date-picker';
 
-// Verificar se é tablet
-const { width } = Dimensions.get("window");
-const isTablet = width > 600;
+
+
 
 // Interface para Fatura
 interface Fatura {
@@ -61,13 +63,347 @@ interface Fatura {
   };
 }
 
+// Tipos de ordenação
+type OrdenacaoTipo = "original" | "leitura";
+
+// Tipos de filtro
+type FiltroTipo = "todos" | "lidos" | "naoLidos";
+
+// Interface para props do FaturaItem
+interface FaturaItemProps {
+  item: Fatura;
+  index: number;
+  isTablet: boolean;
+  handleEdit: (faturaId: number) => void;
+  handleSave: (fatura: Fatura) => Promise<void>;
+  handleCancel: () => void;
+  editingId: number | null;
+  leituraAtuais: { [key: number]: string };
+  setLeituraAtuais: React.Dispatch<React.SetStateAction<{ [key: number]: string }>>;
+  dataLeituraAtuais: { [key: number]: Date };
+  showDatepicker: (faturaId: number) => void;
+  showDatePicker: { [key: number]: boolean };
+  onDateChange: (event: DateTimePickerEvent, selectedDate: Date | undefined, faturaId: number) => void;
+  salvando: { [key: number]: boolean };
+  pendingSyncs: { [key: number]: boolean };
+  leiturasSalvas: { [key: number]: boolean };
+  formatarNumeroComMilhar: (value: number | string | undefined) => string;
+  formatarData: (data: string | Date | undefined) => string;
+}
+
+// Componente memoizado para renderizar cada item da fatura
+const FaturaItem = memo<FaturaItemProps>(({ 
+  item, 
+  index, 
+  isTablet, 
+  handleEdit, 
+  handleSave, 
+  handleCancel, 
+  editingId, 
+  leituraAtuais, 
+  setLeituraAtuais, 
+  dataLeituraAtuais, 
+  showDatepicker, 
+  showDatePicker, 
+  onDateChange, 
+  salvando, 
+  pendingSyncs, 
+  leiturasSalvas,
+  formatarNumeroComMilhar,
+  formatarData
+}) => {
+  const isEditing = editingId === item.id;
+  const isSaving = salvando[item.id] || false;
+  const isDisabled = item.fechada === "Sim";
+  const hasPendingSync = pendingSyncs[item.id];
+  const foiEditada = leiturasSalvas[item.id];
+  
+  // Layout de 2 colunas - determinar se é coluna da esquerda ou direita
+  const isLeftColumn = index % 2 === 0;
+
+  return (
+    <View style={[
+      styles.card,
+      isTablet && { 
+        width: "48%", 
+        marginRight: isLeftColumn ? "1%" : 0,
+        marginLeft: !isLeftColumn ? "1%" : 0 
+      },
+      foiEditada && styles.cardLido,
+      !foiEditada && !isDisabled && styles.cardNaoLido
+    ]}>
+      {/* Cabeçalho do Card - Lote e Cliente */}
+      <View style={styles.cardHeader}>
+        <View style={styles.loteContainer}>
+          <Ionicons name="map-outline" size={20} color="#2a9d8f" />
+          <Text style={[
+            styles.loteText,
+            isTablet && { fontSize: 16 }
+          ]} numberOfLines={1}>
+            {item.LoteAgricola.nomeLote} - {(item.Cliente.nome).toUpperCase()}
+          </Text>
+        </View>
+      </View>
+
+      {/* Informações gerais */}
+      <View style={styles.cardInfo}>
+        <View style={styles.infoColumn}>
+          <View style={styles.infoGroup}>
+            <Ionicons name="water-outline" size={16} color="#2a9d8f" />
+            <Text style={[
+              styles.infoText,
+              isTablet && { fontSize: 14 }
+            ]}>
+              Hidrômetro {item.Hidrometro.codHidrometro}
+            </Text>
+          </View>
+          
+          <View style={styles.infoGroup}>
+            <Ionicons name="analytics-outline" size={16} color="#666" />
+            <Text style={[
+              styles.infoText,
+              isTablet && { fontSize: 14 }
+            ]}>
+              Leitura Anterior: {formatarNumeroComMilhar(item.leitura_anterior || 0)} m³
+              {item.data_leitura_anterior ? 
+                <Text style={[
+                  styles.infoTextSmall,
+                  isTablet && { fontSize: 12 }
+                ]}>
+                  {"\n"}{formatarData(item.data_leitura_anterior)}
+                </Text> : 
+                ""
+              }
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.infoColumn}>
+          {hasPendingSync && (
+            <View style={styles.pendingIconContainer}>
+              <Ionicons name="sync" size={16} color="#ff9800" />
+            </View>
+          )}
+          
+          {foiEditada && !hasPendingSync && (
+            <View style={styles.editedIconContainer}>
+              <Ionicons name="checkmark-circle" size={16} color="#2a9d8f" />
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* Valores de Leitura */}
+      <View style={styles.readingsContainer}>
+        {/* Leitura Atual */}
+        <View style={[styles.readingBlock, styles.highlightedReadingBlock]}>
+          <Text style={[
+            styles.readingLabel,
+            isTablet && { fontSize: 13 }
+          ]}>Leitura Atual</Text>
+          {isEditing ? (
+            <MaskedNumberInput
+              style={styles.input}
+              value={leituraAtuais[item.id]}
+              onChangeText={(text: string) =>
+                setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
+              }
+              placeholder="Informe a leitura"
+            />
+          ) : (
+            <Text style={[
+              styles.readingValue,
+              isTablet && { fontSize: 15 }
+            ]}>
+              {item.Leitura
+                ? formatarNumeroComMilhar(item.Leitura.leitura) + " m³"
+                : "-"}
+            </Text>
+          )}
+        </View>
+
+        {/* Data Leitura Atual */}
+        <View style={[styles.readingBlock, styles.highlightedReadingBlock]}>
+          <Text style={[
+            styles.readingLabel,
+            isTablet && { fontSize: 13 }
+          ]}>Data Atual</Text>
+          {isEditing ? (
+            <View>
+              <TouchableOpacity
+                style={styles.dateButton}
+                onPress={() => showDatepicker(item.id)}
+              >
+                <Text style={[
+                  styles.dateButtonText,
+                  isTablet && { fontSize: 14 }
+                ]}>
+                  {formatarData(dataLeituraAtuais[item.id])}
+                </Text>
+                <Ionicons name="calendar" size={16} color="#2a9d8f" />
+              </TouchableOpacity>
+
+              {showDatePicker[item.id] && (
+                <DateTimePicker
+                  value={dataLeituraAtuais[item.id]}
+                  mode="date"
+                  display="default"
+                  onChange={(event, date) =>
+                    onDateChange(event, date, item.id)
+                  }
+                  maximumDate={new Date()}
+                  locale="pt-BR"
+                />
+              )}
+            </View>
+          ) : (
+            <Text style={[
+              styles.readingValue,
+              isTablet && { fontSize: 15 }
+            ]}>
+              {item.Leitura ? formatarData(item.Leitura.data_leitura) : "-"}
+            </Text>
+          )}
+        </View>
+      </View>
+
+      {/* Rodapé com Botões de Ação */}
+      <View style={styles.cardFooter}>
+        {isEditing ? (
+          // Modo Edição: Botões Salvar e Cancelar
+          <>
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={() => handleSave(item)}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="save-outline" size={18} color="#fff" />
+                  <Text style={[
+                    styles.buttonText,
+                    isTablet && { fontSize: 14 }
+                  ]}>Salvar</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={handleCancel}
+              disabled={isSaving}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#fff" />
+              <Text style={[
+                styles.buttonText,
+                isTablet && { fontSize: 14 }
+              ]}>Cancelar</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          // Modo Visualização: Botão Editar
+          <TouchableOpacity
+            style={[
+              styles.editButton, 
+              { 
+                opacity: isDisabled ? 0.5 : 1,
+                backgroundColor: foiEditada ? '#4d9792' : '#1890ff'
+              }
+            ]}
+            onPress={() => handleEdit(item.id)}
+            disabled={isDisabled}
+          >
+            <Ionicons 
+              name={foiEditada ? "create-outline" : "create"} 
+              size={18} 
+              color="#fff" 
+            />
+            <Text style={[
+              styles.buttonText,
+              isTablet && { fontSize: 14 }
+            ]}>
+              {isDisabled ? "Fatura Fechada" : (foiEditada ? "Reeditar" : "Editar")}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Status Badge */}
+      {item.status === "Paga" && (
+        <View style={styles.statusBadge}>
+          <Ionicons name="checkmark-circle" size={16} color="#fff" />
+          <Text style={[
+            styles.statusText,
+            isTablet && { fontSize: 12 }
+          ]}>Paga</Text>
+        </View>
+      )}
+      {item.status === "Vencida" && (
+        <View style={[styles.statusBadge, styles.statusVencida]}>
+          <Ionicons name="alert-circle" size={16} color="#fff" />
+          <Text style={[
+            styles.statusText,
+            isTablet && { fontSize: 12 }
+          ]}>Vencida</Text>
+        </View>
+      )}
+    </View>
+  );
+});
+
 const LeiturasDetalhesScreen: React.FC = () => {
   const { colors } = useTheme();
+
+  useEffect(() => {
+    // Configuração do idioma do DateTimePicker para o Android
+    if (Platform.OS === 'android') {
+      // Garantir que o locale padrão do aplicativo seja pt-BR
+      if (NativeModules.I18nManager) {
+        NativeModules.I18nManager.allowRTL(false);
+        NativeModules.I18nManager.forceRTL(false);
+      }
+    }
+  }, []);
+  
+  // Estado para dimensões da tela
+  const [dimensions, setDimensions] = useState(() => {
+    return Dimensions.get('window');
+  });
+  
+  // Detectar tablet baseado nas dimensões - AJUSTADO para 550dp
+  const smallerDimension = Math.min(dimensions.width, dimensions.height);
+  const largerDimension = Math.max(dimensions.width, dimensions.height);
+  const isTablet = smallerDimension >= 550 || largerDimension >= 900;
+
+  // Adicionar log para debug
+  console.log(`DIMENSÕES INICIAIS: ${dimensions.width}x${dimensions.height}, smaller: ${smallerDimension}, larger: ${largerDimension}, isTablet: ${isTablet}`);
+  
+  
+  // Listener para mudanças de dimensão (rotação de tela)
+  useEffect(() => {
+    console.log(`UseEffect DIMENSÕES: ${dimensions.width}x${dimensions.height}, isTablet: ${isTablet}`);
+    
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      const newWidth = window.width;
+      const newHeight = window.height;
+      const newSmaller = Math.min(newWidth, newHeight);
+      const newLarger = Math.max(newWidth, newHeight);
+      const newIsTablet = newSmaller >= 550 || newLarger >= 900; // AJUSTADO para 550dp
+      
+      console.log(`DIMENSÕES ALTERADAS: ${newWidth}x${newHeight}, smaller: ${newSmaller}, larger: ${newLarger}, isTablet: ${newIsTablet}`);
+      setDimensions(window);
+    });
+
+    return () => subscription?.remove();
+  }, []);
 
   // Obtendo os dados do contexto
   const { faturasSelecionadas, mesAnoSelecionado, setFaturasSelecionadas } =
     useLeiturasContext();
 
+  // Estados para edição e status
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [leituraAtuais, setLeituraAtuais] = useState<{ [key: number]: string }>({});
@@ -76,11 +412,43 @@ const LeiturasDetalhesScreen: React.FC = () => {
   const [salvando, setSalvando] = useState<{ [key: number]: boolean }>({});
   const [valoresOriginais, setValoresOriginais] = useState<{[key: number]: string}>({});
   const [leiturasSalvas, setLeiturasSalvas] = useState<{[key: number]: boolean}>({});
+  
+  // Refs e estados de UI
   const flatListRef = useRef<FlatList>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [pendingSyncs, setPendingSyncs] = useState<{[key: number]: boolean}>({});
-  const [searchText, setSearchText] = useState('');
+  const [searchText, setSearchText] = useState("");
   const [filteredFaturas, setFilteredFaturas] = useState<Fatura[]>([]);
+
+  // Estados para filtros e ordenação
+  const [ordenacao, setOrdenacao] = useState<OrdenacaoTipo>("original");
+  const [filtro, setFiltro] = useState<FiltroTipo>("todos");
+  const [showFilters, setShowFilters] = useState(false);
+  
+  // Estados para animação e scroll
+  const [scrollY, setScrollY] = useState(0);
+  const scrollYValue = useRef(new Animated.Value(0)).current;
+  const [showTopFab, setShowTopFab] = useState(false);
+  const filterAnimation = useRef(new Animated.Value(0)).current;
+
+  // Contadores para estatísticas
+  const totalFaturas = faturasSelecionadas.length;
+  const totalLidas = Object.values(leiturasSalvas).filter(Boolean).length;
+  const faltamLer = totalFaturas - totalLidas;
+
+  // Animação do painel de filtros
+  useEffect(() => {
+    Animated.timing(filterAnimation, {
+      toValue: showFilters ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  }, [showFilters, filterAnimation]);
+
+  const filterPanelHeight = filterAnimation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 120]
+  });
 
   // Inicializar os estados com os dados existentes
   useEffect(() => {
@@ -93,9 +461,9 @@ const LeiturasDetalhesScreen: React.FC = () => {
         ? fatura.Leitura.leitura.toString()
         : "";
 
-      datas[fatura.id] = fatura.Leitura?.data_leitura
+      datas[fatura.id] = fatura.Leitura?.leitura > 0 
         ? new Date(fatura.Leitura.data_leitura)
-        : new Date();
+        : new Date(); // Data atual se não houver leitura válida
         
       // Verificar se a leitura tem valor atual (foi editada)
       editados[fatura.id] = fatura.Leitura?.leitura > 0;
@@ -104,7 +472,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
     setLeituraAtuais(leituras);
     setDataLeituraAtuais(datas);
     setLeiturasSalvas(editados);
-    setFilteredFaturas(faturasSelecionadas);
+    aplicarFiltroEOrdenacao(faturasSelecionadas, filtro, ordenacao, searchText, editados);
     
     // Verificar conexão
     const checkConnection = async () => {
@@ -134,21 +502,64 @@ const LeiturasDetalhesScreen: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [faturasSelecionadas]);
 
-  // Filtrar faturas quando o texto de busca muda
-  useEffect(() => {
-    if (!searchText) {
-      setFilteredFaturas(faturasSelecionadas);
-      return;
+  // Função para aplicar filtro e ordenação às faturas
+  const aplicarFiltroEOrdenacao = useCallback((
+    faturas: Fatura[], 
+    filtroAtual: FiltroTipo, 
+    ordenacaoAtual: OrdenacaoTipo, 
+    termo: string,
+    statusLeituras: {[key: number]: boolean}
+  ) => {
+    // Primeiro, aplicar filtro de texto (busca)
+    let resultado = termo 
+      ? faturas.filter(fatura => 
+          fatura.LoteAgricola.nomeLote.toLowerCase().includes(termo.toLowerCase()) ||
+          fatura.Cliente.nome.toLowerCase().includes(termo.toLowerCase())
+        )
+      : [...faturas];
+      
+    // Aplicar filtro por status (todos/lidos/não lidos)
+    if (filtroAtual === 'lidos') {
+      resultado = resultado.filter(fatura => statusLeituras[fatura.id] === true);
+    } else if (filtroAtual === 'naoLidos') {
+      resultado = resultado.filter(fatura => statusLeituras[fatura.id] !== true);
     }
     
-    const lowerSearchText = searchText.toLowerCase();
-    const filtered = faturasSelecionadas.filter(fatura => 
-      fatura.LoteAgricola.nomeLote.toLowerCase().includes(lowerSearchText) ||
-      fatura.Cliente.nome.toLowerCase().includes(lowerSearchText)
-    );
+    // Aplicar ordenação
+    if (ordenacaoAtual === 'leitura') {
+      // Coloca faturas não lidas primeiro, depois as lidas
+      resultado.sort((a, b) => {
+        const aLido = statusLeituras[a.id] === true;
+        const bLido = statusLeituras[b.id] === true;
+        
+        if (aLido && !bLido) return 1;
+        if (!aLido && bLido) return -1;
+        
+        // Manter a ordem original dentro de cada grupo
+        return faturas.indexOf(a) - faturas.indexOf(b);
+      });
+    } 
+    // Para 'original', mantém a ordem do array original (ordenação padrão da API)
     
-    setFilteredFaturas(filtered);
-  }, [searchText, faturasSelecionadas]);
+    setFilteredFaturas(resultado);
+  }, []);
+  
+  // Efeito para atualizar a lista quando filtro, ordenação ou busca mudam
+  useEffect(() => {
+    aplicarFiltroEOrdenacao(faturasSelecionadas, filtro, ordenacao, searchText, leiturasSalvas);
+  }, [filtro, ordenacao, searchText, leiturasSalvas, aplicarFiltroEOrdenacao]);
+
+  // Listener de rolagem para exibir/ocultar o FAB de voltar ao topo
+  useEffect(() => {
+    const listenerId = scrollYValue.addListener(({ value }) => {
+      setScrollY(value);
+      setShowTopFab(value > 100);
+    });
+    
+    return () => {
+      scrollYValue.removeListener(listenerId);
+    };
+  }, [scrollYValue]);
 
   const handleEdit = (faturaId: number) => {
     setEditingId(faturaId);
@@ -159,6 +570,13 @@ const LeiturasDetalhesScreen: React.FC = () => {
       setValoresOriginais((prev) => ({
         ...prev,
         [faturaId]: fatura.Leitura?.leitura.toString() || "",
+      }));
+    }
+    // Se for uma nova leitura (sem leitura anterior), atualizar a data para hoje
+    if (!fatura.Leitura?.leitura) {
+      setDataLeituraAtuais((prev) => ({
+        ...prev,
+        [faturaId]: new Date()
       }));
     }
   };
@@ -305,8 +723,23 @@ const LeiturasDetalhesScreen: React.FC = () => {
             }
           }
 
-          Alert.alert("Sucesso", "Leitura atualizada com sucesso!");
+          Toast.show({
+            type: 'success',
+            text1: 'Leitura salva com sucesso!',
+            position: 'bottom',
+            visibilityTime: 2000,
+          });
+          
           setEditingId(null);
+          
+          // Reaplicar filtro e ordenação após salvar
+          aplicarFiltroEOrdenacao(
+            faturasSelecionadas, 
+            filtro, 
+            ordenacao, 
+            searchText, 
+            {...leiturasSalvas, [fatura.id]: true}
+          );
         }
       } else {
         // MODO OFFLINE: Salvar localmente para sincronização posterior
@@ -326,14 +759,6 @@ const LeiturasDetalhesScreen: React.FC = () => {
         });
         
         setFaturasSelecionadas(updatedFaturas);
-        setFilteredFaturas(
-          searchText 
-            ? updatedFaturas.filter(f => 
-                f.LoteAgricola.nomeLote.toLowerCase().includes(searchText.toLowerCase()) ||
-                f.Cliente.nome.toLowerCase().includes(searchText.toLowerCase())
-              )
-            : updatedFaturas
-        );
         
         // 2. Salvar dados da atualização para sync posterior
         try {
@@ -352,11 +777,24 @@ const LeiturasDetalhesScreen: React.FC = () => {
           setPendingSyncs(updatedPending);
           await AsyncStorage.setItem('pendingLeiturasSyncs', JSON.stringify(updatedPending));
           
-          Alert.alert(
-            "Salvo localmente", 
-            "Leitura salva no dispositivo. Será sincronizada automaticamente quando houver conexão."
-          );
+          Toast.show({
+            type: 'info',
+            text1: 'Leitura salva localmente',
+            text2: 'Será sincronizada quando houver conexão',
+            position: 'bottom',
+            visibilityTime: 2000,
+          });
+          
           setEditingId(null);
+          
+          // Reaplicar filtro e ordenação após salvar
+          aplicarFiltroEOrdenacao(
+            updatedFaturas, 
+            filtro, 
+            ordenacao, 
+            searchText, 
+            {...leiturasSalvas, [fatura.id]: true}
+          );
         } catch (storageError) {
           console.error("Erro ao salvar dados offline:", storageError);
           Alert.alert("Erro", "Não foi possível salvar os dados offline.");
@@ -377,194 +815,184 @@ const LeiturasDetalhesScreen: React.FC = () => {
     }
   };
 
-  const renderItem = ({ item, index }: { item: Fatura, index: number }) => {
-    const isEditing = editingId === item.id;
-    const isSaving = salvando[item.id] || false;
-    const isDisabled = item.fechada === "Sim";
-    const hasPendingSync = pendingSyncs[item.id];
-    const foiEditada = leiturasSalvas[item.id];
-    
-    // Layout de 2 colunas - determinar se é coluna da esquerda ou direita
-    const isLeftColumn = index % 2 === 0;
-
-    return (
-      <View style={[
-        styles.card,
-        isTablet && { 
-          width: '49%', 
-          marginRight: isLeftColumn ? '1%' : 0,
-          marginLeft: !isLeftColumn ? '1%' : 0 
+  // Componente para o painel de filtros
+  const renderFilterPanel = () => (
+    <Animated.View 
+      style={[
+        styles.filterPanel,
+        {
+          height: filterPanelHeight,
+          opacity: filterAnimation,
+          overflow: 'hidden',
         }
-      ]}>
-        {/* Cabeçalho do Card - Lote e Cliente */}
-        <View style={styles.cardHeader}>
-          <View style={styles.loteContainer}>
-            <Ionicons name="map-outline" size={20} color="#2a9d8f" />
-            <Text style={styles.loteText} numberOfLines={1}>
-              {item.LoteAgricola.nomeLote} - {item.Cliente.nome.split(' ')[0]}
-            </Text>
-          </View>
-        </View>
-
-        {/* Informações gerais */}
-        <View style={styles.cardInfo}>
-          <View style={styles.infoColumn}>
-            <View style={styles.infoGroup}>
-              <Ionicons name="water-outline" size={16} color="#2a9d8f" />
-              <Text style={styles.infoText}>
-                Hidrômetro {item.Hidrometro.codHidrometro}
-              </Text>
-            </View>
-            
-            <View style={styles.infoGroup}>
-              <Ionicons name="analytics-outline" size={16} color="#666" />
-              <Text style={styles.infoText}>
-                Ant.: {formatarNumeroComMilhar(item.leitura_anterior || 0)} m³
-              </Text>
-            </View>
-          </View>
-          
-          <View style={styles.infoColumn}>
-            {hasPendingSync && (
-              <View style={styles.pendingIconContainer}>
-                <Ionicons name="sync" size={16} color="#ff9800" />
-              </View>
-            )}
-            
-            {foiEditada && !hasPendingSync && (
-              <View style={styles.editedIconContainer}>
-                <Ionicons name="checkmark-circle" size={16} color="#2a9d8f" />
-              </View>
-            )}
-            
-            <View style={styles.infoGroup}>
-              <Ionicons name="calendar-outline" size={16} color="#666" />
-              <Text style={styles.infoText} numberOfLines={1}>
-                {formatarData(item.data_leitura_anterior || "")}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Valores de Leitura */}
-        <View style={styles.readingsContainer}>
-          {/* Leitura Atual */}
-          <View style={[styles.readingBlock, styles.highlightedReadingBlock]}>
-            <Text style={styles.readingLabel}>Leitura Atual</Text>
-            {isEditing ? (
-              <MaskedNumberInput
-                style={styles.input}
-                value={leituraAtuais[item.id]}
-                onChangeText={(text) =>
-                  setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
-                }
-                placeholder="Informe a leitura"
-              />
-            ) : (
-              <Text style={styles.readingValue}>
-                {item.Leitura
-                  ? formatarNumeroComMilhar(item.Leitura.leitura) + " m³"
-                  : "-"}
-              </Text>
-            )}
-          </View>
-
-          {/* Data Leitura Atual */}
-          <View style={[styles.readingBlock, styles.highlightedReadingBlock]}>
-            <Text style={styles.readingLabel}>Data Atual</Text>
-            {isEditing ? (
-              <View>
-                <TouchableOpacity
-                  style={styles.dateButton}
-                  onPress={() => showDatepicker(item.id)}
-                >
-                  <Text style={styles.dateButtonText}>
-                    {formatarData(dataLeituraAtuais[item.id])}
-                  </Text>
-                  <Ionicons name="calendar" size={16} color="#2a9d8f" />
-                </TouchableOpacity>
-
-                {showDatePicker[item.id] && (
-                  <DateTimePicker
-                    value={dataLeituraAtuais[item.id]}
-                    mode="date"
-                    display="default"
-                    onChange={(event, date) =>
-                      onDateChange(event, date, item.id)
-                    }
-                    maximumDate={new Date()}
-                    locale="pt-BR"
-                  />
-                )}
-              </View>
-            ) : (
-              <Text style={styles.readingValue}>
-                {item.Leitura ? formatarData(item.Leitura.data_leitura) : "-"}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Rodapé com Botões de Ação */}
-        <View style={styles.cardFooter}>
-          {isEditing ? (
-            // Modo Edição: Botões Salvar e Cancelar
-            <>
-              <TouchableOpacity
-                style={styles.saveButton}
-                onPress={() => handleSave(item)}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="save-outline" size={18} color="#fff" />
-                    <Text style={styles.buttonText}>Salvar</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleCancel}
-                disabled={isSaving}
-              >
-                <Ionicons name="close-circle-outline" size={18} color="#fff" />
-                <Text style={styles.buttonText}>Cancelar</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            // Modo Visualização: Botão Editar
+      ]}
+    >
+      <View style={styles.filterPanelContent}>
+        {/* Bloco de filtros por status */}
+        <View style={styles.filterBlock}>
+          <Text style={styles.filterBlockTitle}>Status</Text>
+          <View style={styles.filterButtonsRow}>
             <TouchableOpacity
-              style={[styles.editButton, { opacity: isDisabled ? 0.5 : 1 }]}
-              onPress={() => handleEdit(item.id)}
-              disabled={isDisabled}
+              style={[
+                styles.filterChip,
+                filtro === "todos" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltro("todos")}
             >
-              <Ionicons name="create-outline" size={18} color="#fff" />
-              <Text style={styles.buttonText}>
-                {isDisabled ? "Fatura Fechada" : "Editar"}
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtro === "todos" && styles.filterChipTextActive,
+                ]}
+              >
+                Todos
               </Text>
             </TouchableOpacity>
-          )}
+
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                filtro === "naoLidos" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltro("naoLidos")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtro === "naoLidos" && styles.filterChipTextActive,
+                ]}
+              >
+                Não Lidos
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                filtro === "lidos" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltro("lidos")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtro === "lidos" && styles.filterChipTextActive,
+                ]}
+              >
+                Lidos
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* Status Badge */}
-        {item.status === "Paga" && (
-          <View style={styles.statusBadge}>
-            <Ionicons name="checkmark-circle" size={16} color="#fff" />
-            <Text style={styles.statusText}>Paga</Text>
+        {/* Bloco de ordenação */}
+        <View style={styles.filterBlock}>
+          <Text style={styles.filterBlockTitle}>Ordenação</Text>
+          <View style={styles.filterButtonsRow}>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                ordenacao === "original" && styles.filterChipActive,
+              ]}
+              onPress={() => setOrdenacao("original")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  ordenacao === "original" && styles.filterChipTextActive,
+                ]}
+              >
+                Original
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                ordenacao === "leitura" && styles.filterChipActive,
+              ]}
+              onPress={() => setOrdenacao("leitura")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  ordenacao === "leitura" && styles.filterChipTextActive,
+                ]}
+              >
+                Leitura
+              </Text>
+            </TouchableOpacity>
           </View>
-        )}
-        {item.status === "Vencida" && (
-          <View style={[styles.statusBadge, styles.statusVencida]}>
-            <Ionicons name="alert-circle" size={16} color="#fff" />
-            <Text style={styles.statusText}>Vencida</Text>
-          </View>
-        )}
+        </View>
       </View>
+    </Animated.View>
+  );
+
+  const renderStatusBar = () => (
+    <View style={styles.statusBarContainer}>
+      <View style={styles.statusItem}>
+        <Text style={styles.statusLabel}>Total:</Text>
+        <Text style={styles.statusValue}>{totalFaturas}</Text>
+      </View>
+      <View style={styles.statusDivider} />
+      <View style={styles.statusItem}>
+        <Text style={styles.statusLabel}>Lidos:</Text>
+        <Text style={[styles.statusValue, {color: "#2a9d8f"}]}>{totalLidas}</Text>
+      </View>
+      <View style={styles.statusDivider} />
+      <View style={styles.statusItem}>
+        <Text style={styles.statusLabel}>Faltam:</Text>
+        <Text style={[styles.statusValue, {color: faltamLer > 0 ? "#e76f51" : "#2a9d8f"}]}>
+          {faltamLer}
+        </Text>
+      </View>
+    </View>
+  );
+
+  // Otimizado com useCallback para melhorar desempenho
+  const renderItem = useCallback(({ item, index }: { item: Fatura; index: number }) => {
+    if (index === 0) {
+      console.log(`Renderizando item com isTablet=${isTablet}, numColumns=${isTablet ? 2 : 1}`);
+    }
+    
+    return (
+      <FaturaItem
+        item={item}
+        index={index}
+        isTablet={isTablet}
+        handleEdit={handleEdit}
+        handleSave={handleSave}
+        handleCancel={handleCancel}
+        editingId={editingId}
+        leituraAtuais={leituraAtuais}
+        setLeituraAtuais={setLeituraAtuais}
+        dataLeituraAtuais={dataLeituraAtuais}
+        showDatepicker={showDatepicker}
+        showDatePicker={showDatePicker}
+        onDateChange={onDateChange}
+        salvando={salvando}
+        pendingSyncs={pendingSyncs}
+        leiturasSalvas={leiturasSalvas}
+        formatarNumeroComMilhar={formatarNumeroComMilhar}
+        formatarData={formatarData}
+      />
     );
-  };
+  }, [
+    isTablet, 
+    editingId, 
+    leituraAtuais, 
+    dataLeituraAtuais, 
+    showDatePicker, 
+    salvando, 
+    pendingSyncs, 
+    leiturasSalvas, 
+    handleEdit,
+    handleSave,
+    handleCancel,
+    showDatepicker,
+    onDateChange,
+    setLeituraAtuais
+  ]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -593,13 +1021,16 @@ const LeiturasDetalhesScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Campo de busca */}
+        {/* Barra de status com contadores */}
+        {renderStatusBar()}
+
+        {/* Campo de busca com botão de filtro */}
         <View style={styles.searchContainer}>
           <View style={styles.searchBox}>
             <Ionicons name="search" size={22} color="#666" style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Buscar por lote ou cliente..."
+              placeholder="Buscar por lote ou irrigante..."
               value={searchText}
               onChangeText={setSearchText}
               clearButtonMode="while-editing"
@@ -610,7 +1041,24 @@ const LeiturasDetalhesScreen: React.FC = () => {
               </TouchableOpacity>
             )}
           </View>
+          
+          <TouchableOpacity 
+            style={[
+              styles.filterButton,
+              showFilters && styles.filterButtonActive
+            ]} 
+            onPress={() => setShowFilters(!showFilters)}
+          >
+            <Ionicons 
+              name={showFilters ? "options" : "options-outline"} 
+              size={22} 
+              color={showFilters ? "#fff" : "#2a9d8f"} 
+            />
+          </TouchableOpacity>
         </View>
+        
+        {/* Painel de filtros expansível */}
+        {renderFilterPanel()}
 
         <FlatList
           ref={flatListRef}
@@ -620,22 +1068,42 @@ const LeiturasDetalhesScreen: React.FC = () => {
           contentContainerStyle={styles.listContent}
           numColumns={isTablet ? 2 : 1}
           key={isTablet ? 'two-columns' : 'one-column'}
+          onLayout={() => console.log(`FlatList renderizado com numColumns=${isTablet ? 2 : 1}, width=${dimensions.width}, isTablet=${isTablet}`)}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollYValue } } }],
+            { useNativeDriver: false }
+          )}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>
-                {searchText ? 'Nenhuma leitura encontrada para essa busca' : 'Nenhuma leitura disponível'}
+                {searchText 
+                  ? 'Nenhuma leitura encontrada para essa busca' 
+                  : filtro !== 'todos'
+                    ? `Nenhuma leitura "${filtro === 'lidos' ? 'lida' : 'não lida'}" disponível`
+                    : 'Nenhuma leitura disponível'
+                }
               </Text>
             </View>
           }
         />
         
-        {/* Botão flutuante para scroll */}
+        {/* Botão flutuante para ir para o final */}
         <TouchableOpacity
           style={styles.fab}
           onPress={() => flatListRef.current?.scrollToEnd({ animated: true })}
         >
           <Ionicons name="arrow-down" size={24} color="white" />
         </TouchableOpacity>
+        
+        {/* Botão flutuante para voltar ao topo (aparece durante rolagem) */}
+        {showTopFab && (
+          <TouchableOpacity
+            style={styles.fabTop}
+            onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}
+          >
+            <Ionicons name="arrow-up" size={24} color="white" />
+          </TouchableOpacity>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -670,15 +1138,54 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   
+  // Status Bar (informações sobre quantidades)
+  statusBarContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    padding: 12,
+    marginVertical: 8,
+    borderRadius: 8,
+    marginHorizontal: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+    justifyContent: 'space-around',
+  },
+  statusItem: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  statusLabel: {
+    color: '#666',
+    marginRight: 5,
+    fontSize: 15,
+  },
+  statusValue: {
+    fontWeight: 'bold',
+    fontSize: 16,
+    color: '#333',
+  },
+  statusDivider: {
+    width: 1,
+    height: '80%',
+    backgroundColor: '#ddd',
+  },
+  
   // Campo de busca
   searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+    gap: 10,
   },
   searchBox: {
+    flex: 1,
     flexDirection: 'row',
     backgroundColor: '#f5f5f5',
     borderRadius: 8,
@@ -694,12 +1201,80 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   
+  // Botão de filtro
+  filterButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2a9d8f',
+  },
+  filterButtonActive: {
+    backgroundColor: '#2a9d8f',
+  },
+  
+  // Painel de filtros expansível
+  filterPanel: {
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingHorizontal: 16,
+  },
+  filterPanelContent: {
+    paddingVertical: 12,
+    flexDirection: 'row', // Layout lado a lado
+    justifyContent: 'space-between',
+    flexWrap: 'wrap', // Para caso a tela seja muito estreita
+  },
+  filterBlock: {
+    flex: 1, // Cada bloco ocupa metade do espaço
+    minWidth: 150, // Largura mínima para garantir espaço adequado
+    marginHorizontal: 8, // Espaçamento entre blocos
+    marginBottom: 8, // Espaço se precisar quebrar linha
+  },
+  filterBlockTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+    marginBottom: 8,
+  },
+  filterButtonsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8, // Reduzido para melhor aproveitamento do espaço
+  },
+  
+  // Chip de filtro
+  filterChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: "#f0f0f0",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  filterChipActive: {
+    backgroundColor: "#2a9d8f",
+    borderColor: "#2a9d8f",
+  },
+  filterChipText: {
+    color: "#666",
+    fontWeight: "500",
+    fontSize: 14,
+  },
+  filterChipTextActive: {
+    color: "#fff",
+  },
+  
   listContent: {
     padding: 12,
-    paddingBottom: 60,
+    paddingBottom: 80, // Espaço para o FAB
   },
 
-  // Card redesenhado
+  // Estilo para o card
   card: {
     backgroundColor: "white",
     borderRadius: 12,
@@ -710,7 +1285,17 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
     position: "relative",
-    overflow: 'hidden',
+    overflow: "hidden",
+  },
+  cardLido: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#2a9d8f",
+    backgroundColor: "#f9fffd",
+  },
+  cardNaoLido: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#ffd700", // Amarelo ouro
+    backgroundColor: "#fffef5",
   },
   
   // Cabeçalho do Card
@@ -728,7 +1313,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   loteText: {
-    fontSize: isTablet ? 16 : 14,
+    fontSize: 14,
     fontWeight: "bold",
     color: "#333",
     marginLeft: 8,
@@ -748,12 +1333,17 @@ const styles = StyleSheet.create({
   },
   infoGroup: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 4,
   },
   infoText: {
-    fontSize: isTablet ? 14 : 12,
+    fontSize: 12,
     color: '#666',
+    flexShrink: 1,
+  },
+  infoTextSmall: {
+    fontSize: 10,
+    color: '#888',
   },
   pendingIconContainer: {
     alignSelf: 'flex-end',
@@ -783,13 +1373,13 @@ const styles = StyleSheet.create({
     borderLeftColor: "#2a9d8f",
   },
   readingLabel: {
-    fontSize: isTablet ? 13 : 12,
+    fontSize: 12,
     color: "#2a9d8f",
     fontWeight: '500',
     marginBottom: 4,
   },
   readingValue: {
-    fontSize: isTablet ? 15 : 14,
+    fontSize: 14,
     fontWeight: "600",
     color: "#2a9d8f",
   },
@@ -801,7 +1391,7 @@ const styles = StyleSheet.create({
     borderColor: "#2a9d8f",
     borderRadius: 6,
     padding: 6,
-    fontSize: isTablet ? 15 : 13,
+    fontSize: 13,
     color: "#333",
   },
   dateButton: {
@@ -815,7 +1405,7 @@ const styles = StyleSheet.create({
     padding: 6,
   },
   dateButtonText: {
-    fontSize: isTablet ? 14 : 12,
+    fontSize: 12,
     color: "#333",
   },
 
@@ -865,7 +1455,7 @@ const styles = StyleSheet.create({
     color: "white",
     marginLeft: 6,
     fontWeight: "500",
-    fontSize: isTablet ? 14 : 12,
+    fontSize: 12,
   },
 
   // Status Badge
@@ -888,7 +1478,7 @@ const styles = StyleSheet.create({
   statusText: {
     color: "white",
     fontWeight: "bold",
-    fontSize: isTablet ? 12 : 10,
+    fontSize: 10,
   },
 
   // Container vazio
@@ -904,12 +1494,31 @@ const styles = StyleSheet.create({
     color: "#999",
   },
 
-  //Botão flutuante
+  // Botão flutuante para o final
   fab: {
     position: 'absolute',
     bottom: 20,
     right: 20,
     backgroundColor: '#2a9d8f',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    zIndex: 1,
+  },
+  
+  // Botão flutuante para o topo (novo)
+  fabTop: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    backgroundColor: '#1890ff',
     width: 50,
     height: 50,
     borderRadius: 25,
