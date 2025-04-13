@@ -13,11 +13,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
-import { useLeiturasContext } from "../../contexts/LeiturasContext"; // Importando o contexto
+import { useLeiturasContext } from "../../contexts/LeiturasContext";
 import api from "../../api/axiosConfig";
 import LeituraCard from "../../components/leituras/LeituraCard";
 import ErrorMessage from "../../components/ErrorMessage";
 import { useTheme } from "@react-navigation/native";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import Toast from 'react-native-toast-message';
 
 // Interface para o objeto de leitura mensal
 interface Fatura {
@@ -55,176 +58,126 @@ const LeiturasScreen: React.FC = () => {
   const [error, setError] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [isOffline, setIsOffline] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   const { user } = useAuth();
   const { colors } = useTheme();
-
-  // Usando o contexto para salvar as faturas selecionadas
   const { setFaturasSelecionadas, setMesAnoSelecionado } = useLeiturasContext();
 
-  const carregarLeituras = useCallback(
-    async (page = 1) => {
-      try {
-        setLoading(true);
-        setError("");
+  // Função para verificar conexão
+  const checkConnection = async () => {
+    const netInfo = await NetInfo.fetch();
+    setIsOffline(!netInfo.isConnected);
+    return netInfo.isConnected;
+  };
 
-        console.log(`Iniciando carregamento de leituras (página ${page})...`);
-
-        // Chamada à API com parâmetros de paginação
-        const response = await api.get("/faturamensal", {
-          params: {
-            page,
-            limit: 3,
-          },
+  // Função para carregar dados offline
+  const carregarDadosOffline = async () => {
+    try {
+      const dadosSalvos = await AsyncStorage.getItem('leituras_data');
+      const timestamp = await AsyncStorage.getItem('leituras_timestamp');
+      
+      if (dadosSalvos) {
+        const dados = JSON.parse(dadosSalvos);
+        setLeituras(dados);
+        setLastSyncTime(timestamp);
+        setHasMore(false);
+        
+        Toast.show({
+          type: 'info',
+          text1: 'Modo offline',
+          text2: `Usando dados salvos em ${new Date(timestamp || '').toLocaleString()}`,
+          visibilityTime: 3000,
         });
-
-        console.log("Resposta da API:", response.status);
-
-        // Verificar se a resposta segue o formato esperado (data e hasMore)
-        if (response.data && response.data.data) {
-          const { data, hasMore: morePages } = response.data;
-          console.log(
-            `Recebidos ${data.length} grupos de faturas, hasMore: ${morePages}`
-          );
-
-          // Se for a primeira página, substituímos os dados
-          // Se for uma página subsequente, concatenamos com os dados existentes
-          const novasLeituras = page === 1 ? [] : [...leituras];
-
-          // Processar cada grupo de faturas recebido
-          data.forEach((grupo: any) => {
-            // Calcular leituras informadas (com valor > 0)
-            const leiturasInformadas =
-              grupo.faturas?.filter(
-                (f: Fatura) =>
-                  f.valor_leitura_m3 &&
-                  parseFloat(f.valor_leitura_m3.toString()) > 0
-              ).length || 0;
-
-            // Calcular valores totais
-            let valorTotal = 0;
-            let valorMonetario = 0;
-            let valorParteFixa = 0;
-            let volumeTotal = 0;
-
-            if (grupo.faturas && grupo.faturas.length > 0) {
-              grupo.faturas.forEach((fatura: Fatura) => {
-                valorTotal += parseFloat(fatura.valor_total?.toString() || "0");
-                valorMonetario += parseFloat(
-                  fatura.valor_monetario?.toString() || "0"
-                );
-                valorParteFixa += parseFloat(
-                  fatura.valor_parte_fixa?.toString() || "0"
-                );
-                volumeTotal += parseFloat(
-                  fatura.valor_leitura_m3?.toString() || "0"
-                );
-              });
-            }
-
-            novasLeituras.push({
-              mesAno: grupo.mesAno,
-              quantidadeLeituras: grupo.faturas?.length || 0,
-              valorTotal,
-              valorMonetario,
-              valorParteFixa,
-              volumeTotal,
-              dataCriacao: grupo.dataCriacao || new Date().toISOString(),
-              leiturasInformadas,
-              totalLeituras: grupo.faturas?.length || 0,
-              faturas: grupo.faturas || [],
-              isAllFechada: grupo.faturas?.every((f: Fatura) => f.fechada === "Sim") || false,
-            });
-          });
-
-          setLeituras(novasLeituras);
-          setHasMore(morePages);
-          setCurrentPage(page);
-          console.log(
-            `Processadas ${novasLeituras.length} leituras mensais no total`
-          );
-        } else {
-          console.log("Resposta completa:", JSON.stringify(response.data));
-          console.log(
-            "Formato de resposta inesperado. Verificando se é um array direto."
-          );
-
-          // Tentar tratar a resposta como um array direto
-          if (Array.isArray(response.data)) {
-            console.log(
-              `Dados recebidos como array com ${response.data.length} itens`
-            );
-            const dataArray = response.data;
-
-            // Processar os dados como antes
-            const leiturasProcessadas = dataArray.map((grupo: any) => {
-              const leiturasInformadas =
-                grupo.faturas?.filter(
-                  (f: Fatura) =>
-                    f.valor_leitura_m3 &&
-                    parseFloat(f.valor_leitura_m3.toString()) > 0
-                ).length || 0;
-
-              let valorTotal = 0;
-              let valorMonetario = 0;
-              let valorParteFixa = 0;
-              let volumeTotal = 0;
-
-              if (grupo.faturas && grupo.faturas.length > 0) {
-                grupo.faturas.forEach((fatura: Fatura) => {
-                  valorTotal += parseFloat(
-                    fatura.valor_total?.toString() || "0"
-                  );
-                  valorMonetario += parseFloat(
-                    fatura.valor_monetario?.toString() || "0"
-                  );
-                  valorParteFixa += parseFloat(
-                    fatura.valor_parte_fixa?.toString() || "0"
-                  );
-                  volumeTotal += parseFloat(
-                    fatura.valor_leitura_m3?.toString() || "0"
-                  );
-                });
-              }
-
-              return {
-                mesAno: grupo.mesAno,
-                quantidadeLeituras: grupo.faturas?.length || 0,
-                valorTotal,
-                valorMonetario,
-                valorParteFixa,
-                volumeTotal,
-                dataCriacao: grupo.dataCriacao || new Date().toISOString(),
-                leiturasInformadas,
-                totalLeituras: grupo.faturas?.length || 0,
-                faturas: grupo.faturas || [],
-                isAllFechada: grupo.faturas?.every((f: Fatura) => f.fechada === "Sim") || false,
-              };
-            });
-
-            setLeituras(leiturasProcessadas);
-            setHasMore(false); // Não sabemos se há mais, então assumimos que não
-            console.log(
-              `Processadas ${leiturasProcessadas.length} leituras mensais (array direto)`
-            );
-          } else {
-            // Se não conseguirmos tratar, mostramos uma tela vazia
-            console.log(
-              "Nenhum dado de leitura encontrado ou formato completamente inesperado"
-            );
-            setLeituras([]);
-          }
-        }
-      } catch (err: any) {
-        console.error("Erro ao carregar leituras:", err);
-        setError("Falha ao carregar as leituras. Verifique sua conexão.");
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
+      } else {
+        setError("Nenhum dado disponível para uso offline");
       }
-    },
-    [leituras]
-  );
+    } catch (error) {
+      console.error("Erro ao carregar dados offline:", error);
+      setError("Erro ao carregar dados salvos");
+    }
+  };
+
+  const carregarLeituras = useCallback(async (page = 1) => {
+    try {
+      setLoading(true);
+      setError("");
+
+      // Verificar conexão
+      const isConnected = await checkConnection();
+      
+      if (isConnected) {
+        // MODO ONLINE: Buscar da API
+        try {
+          // URL específica para o app - carrega tudo de uma vez
+          const response = await api.get("/faturamensal/app/leituras");
+          
+          if (response.data && response.data.success) {
+            const { data, timestamp } = response.data;
+            
+            // Salvar no AsyncStorage para uso offline
+            await AsyncStorage.setItem('leituras_data', JSON.stringify(data));
+            await AsyncStorage.setItem('leituras_timestamp', timestamp);
+            
+            setLeituras(data);
+            setLastSyncTime(timestamp);
+            setHasMore(false); // Tudo carregado de uma vez
+            
+            Toast.show({
+              type: 'success',
+              text1: 'Dados atualizados',
+              text2: 'Leituras sincronizadas com sucesso',
+              visibilityTime: 2000,
+            });
+          } else {
+            // Fallback para API original (com paginação) em caso de erro
+            console.log("Usando API com paginação como fallback");
+            const fallbackResponse = await api.get("/faturamensal", {
+              params: {
+                page,
+                limit: 10, // Aumentado para carregar mais de uma vez
+              },
+            });
+            
+            if (fallbackResponse.data && fallbackResponse.data.data) {
+              const { data, hasMore: morePages } = fallbackResponse.data;
+              
+              // Processar os dados da mesma forma que antes
+              const processedData = data.map((grupo: any) => {
+                const leiturasInformadas = grupo.faturas?.filter(
+                  (f: Fatura) => f.valor_leitura_m3 &&
+                  parseFloat(f.valor_leitura_m3.toString()) > 0
+                ).length || 0;
+                
+                return {
+                  ...grupo,
+                  leiturasInformadas,
+                  isAllFechada: grupo.faturas?.every((f: Fatura) => f.fechada === "Sim") || false,
+                };
+              });
+              
+              setLeituras(processedData);
+              setHasMore(morePages);
+              setCurrentPage(page);
+            }
+          }
+        } catch (error) {
+          console.error("Erro na API, tentando usar dados offline:", error);
+          await carregarDadosOffline();
+        }
+      } else {
+        // MODO OFFLINE: Carregar do AsyncStorage
+        await carregarDadosOffline();
+      }
+    } catch (error) {
+      console.error("Erro ao carregar leituras:", error);
+      setError("Falha ao carregar as leituras. Verifique sua conexão.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   const loadMore = useCallback(() => {
     if (!loading && hasMore) {
@@ -233,25 +186,27 @@ const LeiturasScreen: React.FC = () => {
   }, [loading, hasMore, currentPage, carregarLeituras]);
 
   useEffect(() => {
-    carregarLeituras(1); // Iniciar com a página 1
+    carregarLeituras(1);
+    
+    // Verificar conexão periódicamente
+    const intervalId = setInterval(async () => {
+      await checkConnection();
+    }, 10000);
+    
+    return () => clearInterval(intervalId);
   }, []);
 
   const onRefresh = () => {
     setRefreshing(true);
-    carregarLeituras(1); // Recarregar a primeira página
+    carregarLeituras(1);
   };
 
-  // Usando o contexto para salvar faturas e navegar
   const handleCardPress = (leitura: LeituraMensal) => {
-    // Salvamos os dados no contexto
     setFaturasSelecionadas(leitura.faturas);
     setMesAnoSelecionado(leitura.mesAno);
-
-    // Navegamos para a tela de detalhes
     router.push("/LeiturasDetalhes");
   };
 
-  // Renderiza um indicador de "carregando mais" no final da lista
   const renderFooter = () => {
     if (!hasMore) return null;
 
@@ -270,6 +225,14 @@ const LeiturasScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Indicador de modo offline */}
+      {isOffline && (
+        <View style={styles.offlineBar}>
+          <Ionicons name="cloud-offline" size={18} color="#fff" />
+          <Text style={styles.offlineText}>Modo offline</Text>
+        </View>
+      )}
+      
       {/* Mensagem de erro, caso exista */}
       {error ? <ErrorMessage error={error} visible={!!error} /> : null}
 
@@ -303,7 +266,18 @@ const LeiturasScreen: React.FC = () => {
               colors={["#2a9d8f"]}
             />
           }
-          ListFooterComponent={renderFooter}
+          ListFooterComponent={
+            <>
+              {renderFooter()}
+              {lastSyncTime && (
+                <View style={styles.syncInfo}>
+                  <Text style={styles.syncText}>
+                    Última sincronização: {new Date(lastSyncTime).toLocaleString()}
+                  </Text>
+                </View>
+              )}
+            </>
+          }
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
           ListEmptyComponent={
@@ -323,7 +297,6 @@ const LeiturasScreen: React.FC = () => {
   );
 };
 
-// Estilos permanecem os mesmos...
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -356,7 +329,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 60, // Espaço extra no final da lista
+    paddingBottom: 60,
   },
   emptyContainer: {
     padding: 40,
@@ -391,6 +364,28 @@ const styles = StyleSheet.create({
   loadMoreText: {
     color: "white",
     fontWeight: "bold",
+  },
+  offlineBar: {
+    backgroundColor: '#ff6b6b',
+    padding: 8,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  offlineText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  syncInfo: {
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  syncText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
   },
 });
 

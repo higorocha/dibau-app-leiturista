@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configuração de ambientes
 type Environment = 'development' | 'production' | 'test';
-const currentEnv: Environment = 'development'; // Mude para 'production' ao publicar
+const currentEnv: Environment = 'production'; // Mude para 'production' ao publicar
 
 // URLs para cada ambiente
 const config = {

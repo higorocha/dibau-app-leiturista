@@ -13,8 +13,9 @@ import "react-native-reanimated";
 import Toast from 'react-native-toast-message';
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { AuthProvider } from "@/src/contexts/AuthContext";
-import { LeiturasProvider } from "@/src/contexts/LeiturasContext"; // Importar o Provider
-
+import { LeiturasProvider } from "@/src/contexts/LeiturasContext";
+import { checkAndSync } from "@/src/services/SyncService";
+import NetInfo from '@react-native-community/netinfo';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -31,6 +32,24 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded) {
       SplashScreen.hideAsync();
+      
+      // Verificar e sincronizar após o app carregar
+      setTimeout(() => {
+        checkAndSync();
+      }, 3000);
+      
+      // Configurar listener de conectividade
+      const unsubscribe = NetInfo.addEventListener(state => {
+        if (state.isConnected) {
+          // Quando a conexão é estabelecida, verificar pendências
+          checkAndSync();
+        }
+      });
+      
+      // Limpar listener
+      return () => {
+        unsubscribe();
+      };
     }
   }, [loaded]);
 

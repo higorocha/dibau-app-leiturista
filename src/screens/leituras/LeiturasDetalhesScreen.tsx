@@ -1,5 +1,5 @@
 // src/screens/leituras/LeiturasDetalhesScreen.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -23,8 +24,9 @@ import api from "../../api/axiosConfig";
 import MaskedNumberInput from "../../components/inputs/MaskedNumberInput";
 import { formatarNumeroComMilhar, formatarData } from "../../utils/formatters";
 import { useTheme } from "@react-navigation/native";
-import { useRef } from "react";
-import { Animated } from "react-native";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import Toast from 'react-native-toast-message';
 
 // Verificar se é tablet
 const { width } = Dimensions.get("window");
@@ -68,25 +70,23 @@ const LeiturasDetalhesScreen: React.FC = () => {
 
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [leituraAtuais, setLeituraAtuais] = useState<{ [key: number]: string }>(
-    {}
-  );
-  const [dataLeituraAtuais, setDataLeituraAtuais] = useState<{
-    [key: number]: Date;
-  }>({});
-  const [showDatePicker, setShowDatePicker] = useState<{
-    [key: number]: boolean;
-  }>({});
+  const [leituraAtuais, setLeituraAtuais] = useState<{ [key: number]: string }>({});
+  const [dataLeituraAtuais, setDataLeituraAtuais] = useState<{[key: number]: Date}>({});
+  const [showDatePicker, setShowDatePicker] = useState<{[key: number]: boolean}>({});
   const [salvando, setSalvando] = useState<{ [key: number]: boolean }>({});
-  const [valoresOriginais, setValoresOriginais] = useState<{
-    [key: number]: string;
-  }>({});
+  const [valoresOriginais, setValoresOriginais] = useState<{[key: number]: string}>({});
+  const [leiturasSalvas, setLeiturasSalvas] = useState<{[key: number]: boolean}>({});
   const flatListRef = useRef<FlatList>(null);
+  const [isOffline, setIsOffline] = useState(false);
+  const [pendingSyncs, setPendingSyncs] = useState<{[key: number]: boolean}>({});
+  const [searchText, setSearchText] = useState('');
+  const [filteredFaturas, setFilteredFaturas] = useState<Fatura[]>([]);
 
   // Inicializar os estados com os dados existentes
   useEffect(() => {
     const leituras: { [key: number]: string } = {};
     const datas: { [key: number]: Date } = {};
+    const editados: { [key: number]: boolean } = {};
 
     faturasSelecionadas.forEach((fatura) => {
       leituras[fatura.id] = fatura.Leitura?.leitura
@@ -96,11 +96,59 @@ const LeiturasDetalhesScreen: React.FC = () => {
       datas[fatura.id] = fatura.Leitura?.data_leitura
         ? new Date(fatura.Leitura.data_leitura)
         : new Date();
+        
+      // Verificar se a leitura tem valor atual (foi editada)
+      editados[fatura.id] = fatura.Leitura?.leitura > 0;
     });
 
     setLeituraAtuais(leituras);
     setDataLeituraAtuais(datas);
+    setLeiturasSalvas(editados);
+    setFilteredFaturas(faturasSelecionadas);
+    
+    // Verificar conexão
+    const checkConnection = async () => {
+      const netInfo = await NetInfo.fetch();
+      setIsOffline(!netInfo.isConnected);
+    };
+    
+    checkConnection();
+    
+    // Verificar se há alterações pendentes
+    const checkPendingSyncs = async () => {
+      try {
+        const pendingData = await AsyncStorage.getItem('pendingLeiturasSyncs');
+        if (pendingData) {
+          const pendingChanges = JSON.parse(pendingData);
+          setPendingSyncs(pendingChanges);
+        }
+      } catch (error) {
+        console.error("Erro ao verificar sincronizações pendentes:", error);
+      }
+    };
+    
+    checkPendingSyncs();
+    
+    // Verificar conexão periodicamente
+    const intervalId = setInterval(checkConnection, 10000);
+    return () => clearInterval(intervalId);
   }, [faturasSelecionadas]);
+
+  // Filtrar faturas quando o texto de busca muda
+  useEffect(() => {
+    if (!searchText) {
+      setFilteredFaturas(faturasSelecionadas);
+      return;
+    }
+    
+    const lowerSearchText = searchText.toLowerCase();
+    const filtered = faturasSelecionadas.filter(fatura => 
+      fatura.LoteAgricola.nomeLote.toLowerCase().includes(lowerSearchText) ||
+      fatura.Cliente.nome.toLowerCase().includes(lowerSearchText)
+    );
+    
+    setFilteredFaturas(filtered);
+  }, [searchText, faturasSelecionadas]);
 
   const handleEdit = (faturaId: number) => {
     setEditingId(faturaId);
@@ -192,37 +240,127 @@ const LeiturasDetalhesScreen: React.FC = () => {
       const dataFormatada = new Date(dataLeituraAtuais[fatura.id])
         .toISOString()
         .split("T")[0]; // Formato YYYY-MM-DD
+      
+      // Verificar se está online ou offline
+      const netInfo = await NetInfo.fetch();
+      const isConnected = netInfo.isConnected;
+      
+      // Criar objeto com os dados da atualização
+      const updateData = {
+        id: fatura.id,
+        leitura: leituraAtualNum,
+        data_leitura: dataFormatada,
+        updatedAt: new Date().toISOString(),
+      };
 
-      // Chamar a API para atualizar a leitura
-      const response = await api.put(
-        `/faturamensal/atualizar-leitura/${fatura.id}`,
-        {
-          leitura: leituraAtualNum,
-          data_leitura: dataFormatada,
-        }
-      );
+      // Marcar como salvo independente do modo online/offline
+      setLeiturasSalvas(prev => ({
+        ...prev,
+        [fatura.id]: true
+      }));
 
-      if (response.status === 200) {
-        // ATUALIZAÇÃO DOS DADOS LOCAIS
-        // Este é o ponto chave para atualizar os dados após salvar
-        setFaturasSelecionadas(
-          faturasSelecionadas.map((f) => {
-            if (f.id === fatura.id) {
-              return {
-                ...f,
-                Leitura: {
-                  ...f.Leitura,
-                  leitura: leituraAtualNum,
-                  data_leitura: dataFormatada,
-                },
-              };
-            }
-            return f;
-          })
+      if (isConnected) {
+        // MODO ONLINE: Chamar a API diretamente
+        const response = await api.put(
+          `/faturamensal/atualizar-leitura/${fatura.id}`,
+          {
+            leitura: leituraAtualNum,
+            data_leitura: dataFormatada,
+          }
         );
 
-        Alert.alert("Sucesso", "Leitura atualizada com sucesso!");
-        setEditingId(null);
+        if (response.status === 200) {
+          // Atualizar no contexto
+          setFaturasSelecionadas(
+            faturasSelecionadas.map((f) => {
+              if (f.id === fatura.id) {
+                return {
+                  ...f,
+                  Leitura: {
+                    ...f.Leitura,
+                    leitura: leituraAtualNum,
+                    data_leitura: dataFormatada,
+                  },
+                };
+              }
+              return f;
+            })
+          );
+          
+          // Remover da lista de pendentes se existir
+          if (pendingSyncs[fatura.id]) {
+            const updatedPending = { ...pendingSyncs };
+            delete updatedPending[fatura.id];
+            setPendingSyncs(updatedPending);
+            
+            // Atualizar AsyncStorage
+            await AsyncStorage.setItem('pendingLeiturasSyncs', JSON.stringify(updatedPending));
+            
+            // Verificar se existem atualizações pendentes e remover esta
+            const pendingDataStr = await AsyncStorage.getItem('pendingLeituraUpdates') || '{}';
+            const pendingData = JSON.parse(pendingDataStr);
+            if (pendingData[fatura.id]) {
+              delete pendingData[fatura.id];
+              await AsyncStorage.setItem('pendingLeituraUpdates', JSON.stringify(pendingData));
+            }
+          }
+
+          Alert.alert("Sucesso", "Leitura atualizada com sucesso!");
+          setEditingId(null);
+        }
+      } else {
+        // MODO OFFLINE: Salvar localmente para sincronização posterior
+        // 1. Atualizar dados no contexto
+        const updatedFaturas = faturasSelecionadas.map((f) => {
+          if (f.id === fatura.id) {
+            return {
+              ...f,
+              Leitura: {
+                ...f.Leitura,
+                leitura: leituraAtualNum,
+                data_leitura: dataFormatada,
+              },
+            };
+          }
+          return f;
+        });
+        
+        setFaturasSelecionadas(updatedFaturas);
+        setFilteredFaturas(
+          searchText 
+            ? updatedFaturas.filter(f => 
+                f.LoteAgricola.nomeLote.toLowerCase().includes(searchText.toLowerCase()) ||
+                f.Cliente.nome.toLowerCase().includes(searchText.toLowerCase())
+              )
+            : updatedFaturas
+        );
+        
+        // 2. Salvar dados da atualização para sync posterior
+        try {
+          // Buscar atualizações pendentes existentes
+          const pendingDataStr = await AsyncStorage.getItem('pendingLeituraUpdates') || '{}';
+          const pendingData = JSON.parse(pendingDataStr);
+          
+          // Adicionar/atualizar esta leitura
+          pendingData[fatura.id] = updateData;
+          
+          // Salvar no AsyncStorage
+          await AsyncStorage.setItem('pendingLeituraUpdates', JSON.stringify(pendingData));
+          
+          // Atualizar status de pendência
+          const updatedPending = { ...pendingSyncs, [fatura.id]: true };
+          setPendingSyncs(updatedPending);
+          await AsyncStorage.setItem('pendingLeiturasSyncs', JSON.stringify(updatedPending));
+          
+          Alert.alert(
+            "Salvo localmente", 
+            "Leitura salva no dispositivo. Será sincronizada automaticamente quando houver conexão."
+          );
+          setEditingId(null);
+        } catch (storageError) {
+          console.error("Erro ao salvar dados offline:", storageError);
+          Alert.alert("Erro", "Não foi possível salvar os dados offline.");
+        }
       }
     } catch (error: any) {
       console.error("Erro ao salvar leitura:", error);
@@ -239,128 +377,131 @@ const LeiturasDetalhesScreen: React.FC = () => {
     }
   };
 
-  const renderItem = ({ item }: { item: Fatura }) => {
+  const renderItem = ({ item, index }: { item: Fatura, index: number }) => {
     const isEditing = editingId === item.id;
     const isSaving = salvando[item.id] || false;
     const isDisabled = item.fechada === "Sim";
+    const hasPendingSync = pendingSyncs[item.id];
+    const foiEditada = leiturasSalvas[item.id];
+    
+    // Layout de 2 colunas - determinar se é coluna da esquerda ou direita
+    const isLeftColumn = index % 2 === 0;
 
     return (
-      <View style={styles.card}>
-        {/* Cabeçalho do Card - Lote e Hidrômetro */}
+      <View style={[
+        styles.card,
+        isTablet && { 
+          width: '49%', 
+          marginRight: isLeftColumn ? '1%' : 0,
+          marginLeft: !isLeftColumn ? '1%' : 0 
+        }
+      ]}>
+        {/* Cabeçalho do Card - Lote e Cliente */}
         <View style={styles.cardHeader}>
           <View style={styles.loteContainer}>
-            <Ionicons name="map-outline" size={24} color="#2a9d8f" />
-            <Text style={styles.loteText}>{item.LoteAgricola.nomeLote}</Text>
-          </View>
-          <View style={styles.hidrometroContainer}>
-            <Ionicons name="water-outline" size={22} color="#2a9d8f" />
-            <Text style={styles.hidrometroText}>
-              Hidrômetro {item.Hidrometro.codHidrometro}
+            <Ionicons name="map-outline" size={20} color="#2a9d8f" />
+            <Text style={styles.loteText} numberOfLines={1}>
+              {item.LoteAgricola.nomeLote} - {item.Cliente.nome.split(' ')[0]}
             </Text>
           </View>
         </View>
 
-        {/* Linha Divisória */}
-        <View style={styles.divider} />
-
-        {/* Corpo do Card - Informações de Leitura */}
-        <View style={styles.cardBody}>
-          {/* Linha 1: Valores Anteriores */}
-          <View style={styles.infoRow}>
-            {/* Leitura Anterior */}
-            <View style={styles.infoItem}>
-              <View style={styles.infoHeader}>
-                <Ionicons name="analytics-outline" size={18} color="#666" />
-                <Text style={styles.infoLabel}>Leitura Anterior</Text>
-              </View>
-              <Text style={styles.infoValue}>
-                {formatarNumeroComMilhar(item.leitura_anterior || 0)} m³
+        {/* Informações gerais */}
+        <View style={styles.cardInfo}>
+          <View style={styles.infoColumn}>
+            <View style={styles.infoGroup}>
+              <Ionicons name="water-outline" size={16} color="#2a9d8f" />
+              <Text style={styles.infoText}>
+                Hidrômetro {item.Hidrometro.codHidrometro}
               </Text>
             </View>
-
-            {/* Data Leitura Anterior */}
-            <View style={styles.infoItem}>
-              <View style={styles.infoHeader}>
-                <Ionicons name="calendar-outline" size={18} color="#666" />
-                <Text style={styles.infoLabel}>Data Anterior</Text>
+            
+            <View style={styles.infoGroup}>
+              <Ionicons name="analytics-outline" size={16} color="#666" />
+              <Text style={styles.infoText}>
+                Ant.: {formatarNumeroComMilhar(item.leitura_anterior || 0)} m³
+              </Text>
+            </View>
+          </View>
+          
+          <View style={styles.infoColumn}>
+            {hasPendingSync && (
+              <View style={styles.pendingIconContainer}>
+                <Ionicons name="sync" size={16} color="#ff9800" />
               </View>
-              <Text style={styles.infoValue}>
+            )}
+            
+            {foiEditada && !hasPendingSync && (
+              <View style={styles.editedIconContainer}>
+                <Ionicons name="checkmark-circle" size={16} color="#2a9d8f" />
+              </View>
+            )}
+            
+            <View style={styles.infoGroup}>
+              <Ionicons name="calendar-outline" size={16} color="#666" />
+              <Text style={styles.infoText} numberOfLines={1}>
                 {formatarData(item.data_leitura_anterior || "")}
               </Text>
             </View>
           </View>
+        </View>
 
-          {/* Linha 2: Valores Atuais (com possibilidade de edição) */}
-          <View style={styles.infoRow}>
-            {/* Leitura Atual */}
-            <View style={[styles.infoItem, styles.highlightedItem]}>
-              <View style={styles.infoHeader}>
-                <Ionicons
-                  name="speedometer-outline"
-                  size={18}
-                  color="#2a9d8f"
-                />
-                <Text style={[styles.infoLabel, { color: "#2a9d8f" }]}>
-                  Leitura Atual
-                </Text>
+        {/* Valores de Leitura */}
+        <View style={styles.readingsContainer}>
+          {/* Leitura Atual */}
+          <View style={[styles.readingBlock, styles.highlightedReadingBlock]}>
+            <Text style={styles.readingLabel}>Leitura Atual</Text>
+            {isEditing ? (
+              <MaskedNumberInput
+                style={styles.input}
+                value={leituraAtuais[item.id]}
+                onChangeText={(text) =>
+                  setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
+                }
+                placeholder="Informe a leitura"
+              />
+            ) : (
+              <Text style={styles.readingValue}>
+                {item.Leitura
+                  ? formatarNumeroComMilhar(item.Leitura.leitura) + " m³"
+                  : "-"}
+              </Text>
+            )}
+          </View>
+
+          {/* Data Leitura Atual */}
+          <View style={[styles.readingBlock, styles.highlightedReadingBlock]}>
+            <Text style={styles.readingLabel}>Data Atual</Text>
+            {isEditing ? (
+              <View>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => showDatepicker(item.id)}
+                >
+                  <Text style={styles.dateButtonText}>
+                    {formatarData(dataLeituraAtuais[item.id])}
+                  </Text>
+                  <Ionicons name="calendar" size={16} color="#2a9d8f" />
+                </TouchableOpacity>
+
+                {showDatePicker[item.id] && (
+                  <DateTimePicker
+                    value={dataLeituraAtuais[item.id]}
+                    mode="date"
+                    display="default"
+                    onChange={(event, date) =>
+                      onDateChange(event, date, item.id)
+                    }
+                    maximumDate={new Date()}
+                    locale="pt-BR"
+                  />
+                )}
               </View>
-              {isEditing ? (
-                <MaskedNumberInput
-                  style={styles.input}
-                  value={leituraAtuais[item.id]}
-                  onChangeText={(text) =>
-                    setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
-                  }
-                  placeholder="Informe a leitura"
-                />
-              ) : (
-                <Text style={[styles.infoValue, styles.highlightedValue]}>
-                  {item.Leitura
-                    ? formatarNumeroComMilhar(item.Leitura.leitura) + " m³"
-                    : "-"}
-                </Text>
-              )}
-            </View>
-
-            {/* Data Leitura Atual */}
-            <View style={[styles.infoItem, styles.highlightedItem]}>
-              <View style={styles.infoHeader}>
-                <Ionicons name="today-outline" size={18} color="#2a9d8f" />
-                <Text style={[styles.infoLabel, { color: "#2a9d8f" }]}>
-                  Data Atual
-                </Text>
-              </View>
-              {isEditing ? (
-                <View>
-                  <TouchableOpacity
-                    style={styles.dateButton}
-                    onPress={() => showDatepicker(item.id)}
-                  >
-                    <Text style={styles.dateButtonText}>
-                      {formatarData(dataLeituraAtuais[item.id])}
-                    </Text>
-                    <Ionicons name="calendar" size={18} color="#2a9d8f" />
-                  </TouchableOpacity>
-
-                  {showDatePicker[item.id] && (
-                    <DateTimePicker
-                      value={dataLeituraAtuais[item.id]}
-                      mode="date"
-                      display="default"
-                      onChange={(event, date) =>
-                        onDateChange(event, date, item.id)
-                      }
-                      maximumDate={new Date()}
-                      locale="pt-BR" // Configurando o locale para português Brasil
-                    />
-                  )}
-                </View>
-              ) : (
-                <Text style={[styles.infoValue, styles.highlightedValue]}>
-                  {item.Leitura ? formatarData(item.Leitura.data_leitura) : "-"}
-                </Text>
-              )}
-            </View>
+            ) : (
+              <Text style={styles.readingValue}>
+                {item.Leitura ? formatarData(item.Leitura.data_leitura) : "-"}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -378,7 +519,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
                   <>
-                    <Ionicons name="save-outline" size={20} color="#fff" />
+                    <Ionicons name="save-outline" size={18} color="#fff" />
                     <Text style={styles.buttonText}>Salvar</Text>
                   </>
                 )}
@@ -389,7 +530,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
                 onPress={handleCancel}
                 disabled={isSaving}
               >
-                <Ionicons name="close-circle-outline" size={20} color="#fff" />
+                <Ionicons name="close-circle-outline" size={18} color="#fff" />
                 <Text style={styles.buttonText}>Cancelar</Text>
               </TouchableOpacity>
             </>
@@ -400,7 +541,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
               onPress={() => handleEdit(item.id)}
               disabled={isDisabled}
             >
-              <Ionicons name="create-outline" size={20} color="#fff" />
+              <Ionicons name="create-outline" size={18} color="#fff" />
               <Text style={styles.buttonText}>
                 {isDisabled ? "Fatura Fechada" : "Editar"}
               </Text>
@@ -411,13 +552,13 @@ const LeiturasDetalhesScreen: React.FC = () => {
         {/* Status Badge */}
         {item.status === "Paga" && (
           <View style={styles.statusBadge}>
-            <Ionicons name="checkmark-circle" size={18} color="#fff" />
+            <Ionicons name="checkmark-circle" size={16} color="#fff" />
             <Text style={styles.statusText}>Paga</Text>
           </View>
         )}
         {item.status === "Vencida" && (
           <View style={[styles.statusBadge, styles.statusVencida]}>
-            <Ionicons name="alert-circle" size={18} color="#fff" />
+            <Ionicons name="alert-circle" size={16} color="#fff" />
             <Text style={styles.statusText}>Vencida</Text>
           </View>
         )}
@@ -427,6 +568,14 @@ const LeiturasDetalhesScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Indicador de modo offline */}
+      {isOffline && (
+        <View style={styles.offlineBar}>
+          <Ionicons name="cloud-offline" size={18} color="#fff" />
+          <Text style={styles.offlineText}>Modo offline</Text>
+        </View>
+      )}
+      
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
@@ -434,7 +583,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         <View style={[styles.header, { backgroundColor: colors.card }]}>
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.replace('/(drawer)/(tabs)/leituras')} // Alteração aqui
+            onPress={() => router.replace('/(drawer)/(tabs)/leituras')}
           >
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
@@ -444,19 +593,43 @@ const LeiturasDetalhesScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* Campo de busca */}
+        <View style={styles.searchContainer}>
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={22} color="#666" style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Buscar por lote ou cliente..."
+              value={searchText}
+              onChangeText={setSearchText}
+              clearButtonMode="while-editing"
+            />
+            {searchText.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchText('')}>
+                <Ionicons name="close-circle" size={20} color="#999" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         <FlatList
           ref={flatListRef}
-          data={faturasSelecionadas}
+          data={filteredFaturas}
           renderItem={renderItem}
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.listContent}
+          numColumns={isTablet ? 2 : 1}
+          key={isTablet ? 'two-columns' : 'one-column'}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>Nenhuma leitura disponível</Text>
+              <Text style={styles.emptyText}>
+                {searchText ? 'Nenhuma leitura encontrada para essa busca' : 'Nenhuma leitura disponível'}
+              </Text>
             </View>
           }
         />
-        {/* Adicione este botão flutuante */}
+        
+        {/* Botão flutuante para scroll */}
         <TouchableOpacity
           style={styles.fab}
           onPress={() => flatListRef.current?.scrollToEnd({ animated: true })}
@@ -496,98 +669,129 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.8)",
     marginTop: 4,
   },
+  
+  // Campo de busca
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  searchBox: {
+    flexDirection: 'row',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 16,
+  },
+  
   listContent: {
-    padding: 16,
+    padding: 12,
     paddingBottom: 60,
   },
 
-  // Estilo do Card
+  // Card redesenhado
   card: {
     backgroundColor: "white",
     borderRadius: 12,
-    marginBottom: 16,
+    marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    position: "relative", // Para o badge de status
+    shadowRadius: 4,
+    elevation: 3,
+    position: "relative",
+    overflow: 'hidden',
   },
-
+  
   // Cabeçalho do Card
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   loteContainer: {
     flexDirection: "row",
     alignItems: "center",
-    flex: 2,
+    flex: 1,
   },
   loteText: {
-    fontSize: isTablet ? 18 : 16,
-    fontWeight: "bold",
-    color: "#333",
-    marginLeft: 8,
-  },
-  hidrometroContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  hidrometroText: {
-    fontSize: isTablet ? 15 : 13,
-    color: "#555",
-    marginLeft: 8,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#f0f0f0",
-    marginHorizontal: 16,
-  },
-
-  // Corpo do Card
-  cardBody: {
-    padding: 16,
-  },
-  infoRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  infoItem: {
-    width: "48%",
-    backgroundColor: "#f9f9f9",
-    borderRadius: 8,
-    padding: 12,
-  },
-  highlightedItem: {
-    backgroundColor: "rgba(42, 157, 143, 0.1)",
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: "#2a9d8f",
-  },
-  infoHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  infoLabel: {
-    fontSize: isTablet ? 14 : 12,
-    color: "#666",
-    marginLeft: 4,
-  },
-  infoValue: {
     fontSize: isTablet ? 16 : 14,
     fontWeight: "bold",
     color: "#333",
+    marginLeft: 8,
+    flex: 1,
   },
-  highlightedValue: {
+  
+  // Informações gerais
+  cardInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 10,
+    backgroundColor: '#f9f9f9',
+  },
+  infoColumn: {
+    flexDirection: 'column',
+    gap: 6,
+  },
+  infoGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  infoText: {
+    fontSize: isTablet ? 14 : 12,
+    color: '#666',
+  },
+  pendingIconContainer: {
+    alignSelf: 'flex-end',
+    marginBottom: 4,
+  },
+  editedIconContainer: {
+    alignSelf: 'flex-end',
+    marginBottom: 4,
+  },
+  
+  // Container de leituras
+  readingsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 12,
+    gap: 10,
+  },
+  readingBlock: {
+    flex: 1,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 6,
+    padding: 8,
+  },
+  highlightedReadingBlock: {
+    backgroundColor: "rgba(42, 157, 143, 0.1)",
+    borderLeftWidth: 3,
+    borderLeftColor: "#2a9d8f",
+  },
+  readingLabel: {
+    fontSize: isTablet ? 13 : 12,
     color: "#2a9d8f",
-    fontSize: isTablet ? 18 : 16,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  readingValue: {
+    fontSize: isTablet ? 15 : 14,
+    fontWeight: "600",
+    color: "#2a9d8f",
   },
 
   // Input e DatePicker
@@ -596,9 +800,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a9d8f",
     borderRadius: 6,
-    padding: 8,
-    marginTop: 4,
-    fontSize: isTablet ? 16 : 14,
+    padding: 6,
+    fontSize: isTablet ? 15 : 13,
     color: "#333",
   },
   dateButton: {
@@ -609,11 +812,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a9d8f",
     borderRadius: 6,
-    padding: 8,
-    marginTop: 4,
+    padding: 6,
   },
   dateButtonText: {
-    fontSize: isTablet ? 16 : 14,
+    fontSize: isTablet ? 14 : 12,
     color: "#333",
   },
 
@@ -621,60 +823,49 @@ const styles = StyleSheet.create({
   cardFooter: {
     flexDirection: "row",
     justifyContent: "center",
-    gap: 12,
-    padding: 16,
-    paddingTop: 8,
+    gap: 8,
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
   },
   editButton: {
     backgroundColor: "#1890ff",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
     width: "60%",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    elevation: 1,
   },
   saveButton: {
     backgroundColor: "#52c41a",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
     width: "48%",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    elevation: 1,
   },
   cancelButton: {
     backgroundColor: "#ff4d4f",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
     width: "48%",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    elevation: 1,
   },
   buttonText: {
     color: "white",
-    marginLeft: 8,
+    marginLeft: 6,
     fontWeight: "500",
-    fontSize: isTablet ? 15 : 13,
+    fontSize: isTablet ? 14 : 12,
   },
 
   // Status Badge
@@ -685,8 +876,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#52c41a",
     borderTopRightRadius: 12,
     borderBottomLeftRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
@@ -697,18 +888,19 @@ const styles = StyleSheet.create({
   statusText: {
     color: "white",
     fontWeight: "bold",
-    fontSize: isTablet ? 13 : 11,
+    fontSize: isTablet ? 12 : 10,
   },
 
   // Container vazio
   emptyContainer: {
-    padding: 40,
+    padding: 30,
     alignItems: "center",
     backgroundColor: "white",
     borderRadius: 12,
+    marginTop: 20,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 15,
     color: "#999",
   },
 
@@ -718,17 +910,31 @@ const styles = StyleSheet.create({
     bottom: 20,
     right: 20,
     backgroundColor: '#2a9d8f',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 8,
+    elevation: 6,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
     zIndex: 1,
+  },
+  
+  // Estilos para o modo offline
+  offlineBar: {
+    backgroundColor: '#ff6b6b',
+    padding: 8,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  offlineText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 8,
   },
 });
 
