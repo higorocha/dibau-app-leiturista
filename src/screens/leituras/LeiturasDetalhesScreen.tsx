@@ -466,7 +466,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         : new Date(); // Data atual se não houver leitura válida
         
       // Verificar se a leitura tem valor atual (foi editada)
-      editados[fatura.id] = fatura.Leitura?.leitura > 0;
+      editados[fatura.id] = fatura.valor_leitura_m3 && parseFloat(fatura.valor_leitura_m3.toString()) > 0;
     });
 
     setLeituraAtuais(leituras);
@@ -694,6 +694,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
               if (f.id === fatura.id) {
                 return {
                   ...f,
+                  valor_leitura_m3: leituraAtualNum,
                   Leitura: {
                     ...f.Leitura,
                     leitura: leituraAtualNum,

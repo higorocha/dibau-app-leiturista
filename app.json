@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "SistemaIrrigacaoApp",
+    "name": "DIBAU - App de Leituras",
     "slug": "SistemaIrrigacaoApp",
     "version": "1.0.0",
     "orientation": "default",
@@ -34,7 +34,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/logoEstendido.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"

@@ -146,8 +146,7 @@ const LeiturasScreen: React.FC = () => {
               // Processar os dados da mesma forma que antes
               const processedData = data.map((grupo: any) => {
                 const leiturasInformadas = grupo.faturas?.filter(
-                  (f: Fatura) => f.valor_leitura_m3 &&
-                  parseFloat(f.valor_leitura_m3.toString()) > 0
+                  (f: Fatura) => f.Leitura?.leitura && f.Leitura.leitura > 0
                 ).length || 0;
                 
                 return {
