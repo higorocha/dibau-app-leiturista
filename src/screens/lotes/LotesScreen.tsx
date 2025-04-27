@@ -1,5 +1,5 @@
 // src/screens/lotes/LotesScreen.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -11,15 +11,17 @@ import {
   SafeAreaView,
   Dimensions,
   Alert,
+  TextInput,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import api from "../../api/axiosConfig";
 import { useAuth } from "../../contexts/AuthContext";
 import ErrorMessage from "../../components/ErrorMessage";
 import { useTheme } from "@react-navigation/native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import NetInfo from "@react-native-community/netinfo";
-import Toast from "react-native-toast-message";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import Toast from 'react-native-toast-message';
 import CulturasModal from "../../components/lotes/CulturasModal";
 import { checkAndSyncCulturas } from "../../services/CulturasSyncService";
 // Importar os tipos do arquivo compartilhado
@@ -43,9 +45,16 @@ const LotesScreen: React.FC = () => {
   // Estado para modal de culturas
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedLote, setSelectedLote] = useState<Lote | null>(null);
-  const [selectedLoteCulturas, setSelectedLoteCulturas] = useState<
-    LoteCultura[]
-  >([]);
+  const [selectedLoteCulturas, setSelectedLoteCulturas] = useState<LoteCultura[]>([]);
+
+  // Estados para busca e filtro
+  const [searchText, setSearchText] = useState<string>("");
+  const [filteredLotes, setFilteredLotes] = useState<Lote[]>([]);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filtroCultura, setFiltroCultura] = useState<"todos" | "comCulturas" | "semCulturas">("todos");
+
+  // Estado para animação do painel de filtros
+  const filterAnimation = useRef(new Animated.Value(0)).current;
 
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -74,6 +83,20 @@ const LotesScreen: React.FC = () => {
 
     return () => unsubscribe();
   }, []);
+
+  // Animação do painel de filtros
+  useEffect(() => {
+    Animated.timing(filterAnimation, {
+      toValue: showFilters ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  }, [showFilters, filterAnimation]);
+
+  const filterPanelHeight = filterAnimation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 100]
+  });
 
   // Carregar lotes pendentes de sincronização do AsyncStorage
   useEffect(() => {
@@ -120,6 +143,7 @@ const LotesScreen: React.FC = () => {
         }));
 
         setLotes(lotesCompletos);
+        setFilteredLotes(lotesCompletos);
       } else {
         setError("Nenhum dado de lotes disponível offline");
       }
@@ -141,6 +165,39 @@ const LotesScreen: React.FC = () => {
       setError("Falha ao carregar dados offline");
     }
   };
+
+  // Função para aplicar filtro e busca aos lotes
+  const aplicarFiltro = useCallback(
+    (lotesArray: Lote[], termo: string, filtroCulturaAtual: "todos" | "comCulturas" | "semCulturas") => {
+      // Aplicar filtro de texto (busca)
+      let resultado = termo
+        ? lotesArray.filter(
+            (lote) =>
+              lote.nomeLote.toLowerCase().includes(termo.toLowerCase()) ||
+              (lote.Cliente?.nome && lote.Cliente.nome.toLowerCase().includes(termo.toLowerCase()))
+          )
+        : [...lotesArray];
+
+      // Aplicar filtro de culturas
+      if (filtroCulturaAtual === "comCulturas") {
+        resultado = resultado.filter(
+          (lote) => lote.Culturas && lote.Culturas.length > 0
+        );
+      } else if (filtroCulturaAtual === "semCulturas") {
+        resultado = resultado.filter(
+          (lote) => !lote.Culturas || lote.Culturas.length === 0
+        );
+      }
+
+      setFilteredLotes(resultado);
+    },
+    []
+  );
+
+  // Efeito para atualizar a lista quando filtro ou busca mudam
+  useEffect(() => {
+    aplicarFiltro(lotes, searchText, filtroCultura);
+  }, [lotes, searchText, filtroCultura, aplicarFiltro]);
 
   // Função principal para carregar lotes e culturas
   const carregarDados = async () => {
@@ -170,6 +227,7 @@ const LotesScreen: React.FC = () => {
           }));
 
           setLotes(lotesCompletos);
+          setFilteredLotes(lotesCompletos);
 
           // Carregar culturas
           const culturasResponse = await api.get("/culturas");
@@ -222,6 +280,8 @@ const LotesScreen: React.FC = () => {
   // Função para atualizar dados (pull-to-refresh)
   const onRefresh = () => {
     setRefreshing(true);
+    setSearchText("");
+    setFiltroCultura("todos");
     carregarDados();
   };
 
@@ -252,6 +312,79 @@ const LotesScreen: React.FC = () => {
     setSelectedLoteCulturas(lotesCulturas);
     setModalVisible(true);
   };
+
+  // Função para renderizar o painel de filtros
+  const renderFilterPanel = () => (
+    <Animated.View
+      style={[
+        styles.filterPanel,
+        {
+          height: filterPanelHeight,
+          opacity: filterAnimation,
+          overflow: "hidden",
+        },
+      ]}
+    >
+      <View style={styles.filterPanelContent}>
+        {/* Bloco de filtros por culturas */}
+        <View style={styles.filterBlock}>
+          <Text style={styles.filterBlockTitle}>Culturas</Text>
+          <View style={styles.filterButtonsRow}>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                filtroCultura === "todos" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltroCultura("todos")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtroCultura === "todos" && styles.filterChipTextActive,
+                ]}
+              >
+                Todos
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                filtroCultura === "comCulturas" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltroCultura("comCulturas")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtroCultura === "comCulturas" && styles.filterChipTextActive,
+                ]}
+              >
+                Com Culturas
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                filtroCultura === "semCulturas" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltroCultura("semCulturas")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtroCultura === "semCulturas" && styles.filterChipTextActive,
+                ]}
+              >
+                Sem Culturas
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Animated.View>
+  );
 
   // Função para processar alterações de culturas feitas no modal
   const handleCulturasSave = async (
@@ -340,6 +473,7 @@ const LotesScreen: React.FC = () => {
     });
 
     setLotes(updatedLotes);
+    setFilteredLotes(updatedLotes);
 
     // Atualizar dados no AsyncStorage para uso offline
     await AsyncStorage.setItem("lotes_data", JSON.stringify(updatedLotes));
@@ -458,6 +592,42 @@ const LotesScreen: React.FC = () => {
 
       <ErrorMessage error={error} visible={!!error} />
 
+      {/* Campo de busca com botão de filtro */}
+      <View style={styles.searchContainer}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={22} color="#666" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Buscar por lote ou irrigante..."
+            value={searchText}
+            onChangeText={setSearchText}
+            clearButtonMode="while-editing"
+          />
+          {searchText.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchText("")}>
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        <TouchableOpacity 
+          style={[
+            styles.filterButton,
+            showFilters && styles.filterButtonActive
+          ]} 
+          onPress={() => setShowFilters(!showFilters)}
+        >
+          <Ionicons 
+            name={showFilters ? "options" : "options-outline"} 
+            size={22} 
+            color={showFilters ? "#fff" : "#2a9d8f"} 
+          />
+        </TouchableOpacity>
+      </View>
+      
+      {/* Painel de filtros expansível */}
+      {renderFilterPanel()}
+
       {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2a9d8f" />
@@ -465,7 +635,7 @@ const LotesScreen: React.FC = () => {
         </View>
       ) : (
         <FlatList
-          data={lotes}
+          data={filteredLotes}
           renderItem={renderItem}
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.listContent}
@@ -478,7 +648,11 @@ const LotesScreen: React.FC = () => {
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>Nenhum lote encontrado</Text>
+              <Text style={styles.emptyText}>
+                {searchText || filtroCultura !== "todos" 
+                  ? "Nenhum lote encontrado com os filtros atuais" 
+                  : "Nenhum lote encontrado"}
+              </Text>
               <TouchableOpacity
                 style={styles.reloadButton}
                 onPress={carregarDados}
@@ -509,15 +683,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f5f5",
   },
   offlineBar: {
-    backgroundColor: "#ff6b6b",
+    backgroundColor: '#ff6b6b',
     padding: 8,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   offlineText: {
-    color: "#fff",
-    fontWeight: "bold",
+    color: '#fff',
+    fontWeight: 'bold',
     marginLeft: 8,
   },
   // Estilo para cards pendentes de sincronização
@@ -668,6 +842,89 @@ const styles = StyleSheet.create({
     color: "white",
     fontWeight: "bold",
     fontSize: isTablet ? 16 : 14,
+  },
+  // Estilos para busca e filtro
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    gap: 10,
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "#f5f5f5",
+    borderRadius: 8,
+    alignItems: "center",
+    paddingHorizontal: 10,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 16,
+  },
+  filterButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#f5f5f5",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#2a9d8f",
+  },
+  filterButtonActive: {
+    backgroundColor: "#2a9d8f",
+  },
+  filterPanel: {
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    paddingHorizontal: 16,
+  },
+  filterPanelContent: {
+    paddingVertical: 12,
+  },
+  filterBlock: {
+    marginBottom: 8,
+  },
+  filterBlockTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#666",
+    marginBottom: 8,
+  },
+  filterButtonsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  filterChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: "#f0f0f0",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  filterChipActive: {
+    backgroundColor: "#2a9d8f",
+    borderColor: "#2a9d8f",
+  },
+  filterChipText: {
+    color: "#666",
+    fontWeight: "500",
+    fontSize: 14,
+  },
+  filterChipTextActive: {
+    color: "#fff",
   },
 });
 
