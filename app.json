@@ -10,7 +10,11 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.sistemairrigacao.app"
+      "bundleIdentifier": "com.sistemairrigacao.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Precisamos da sua câmera para registrar fotos das leituras de hidrômetros",
+        "NSPhotoLibraryUsageDescription": "Precisamos de acesso à sua galeria para selecionar fotos de leituras de hidrômetros"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +24,10 @@
       "package": "com.sistemairrigacao.app",
       "permissions": [
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
       ],
       "versionCode": 1
     },
