@@ -29,13 +29,25 @@ class ImagemLeituraService {
    */
   private async initializeDirectory() {
     try {
+      // Garantir que o diretório existe
       const dirInfo = await FileSystem.getInfoAsync(this.imageDirectory);
+      
       if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(this.imageDirectory, { intermediates: true });
-        console.log("[IMAGENS] Diretório de imagens criado");
+        console.log(`[IMAGENS] Criando diretório: ${this.imageDirectory}`);
+        await FileSystem.makeDirectoryAsync(this.imageDirectory, { 
+          intermediates: true 
+        });
+        console.log("[IMAGENS] Diretório de imagens criado com sucesso");
+      } else {
+        console.log("[IMAGENS] Diretório de imagens já existe");
       }
     } catch (error) {
       console.error("[IMAGENS] Erro ao inicializar diretório:", error);
+      // Log detalhado para diagnóstico
+      if (error instanceof Error) {
+        console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
+      }
+      throw error; // Propagar o erro para tratamento adequado
     }
   }
   
@@ -109,31 +121,51 @@ class ImagemLeituraService {
    */
   async salvarImagemLocal(leituraId: number, imageUri: string): Promise<string | null> {
     try {
-      // Verificar permissões se for Android (iOS não precisa para documentDirectory)
-      if (Platform.OS === 'android') {
-        const { status } = await Permissions.askAsync(Permissions.MEDIA_LIBRARY);
-        if (status !== 'granted') {
-          console.log('[IMAGENS] Permissão de armazenamento negada');
-          return null;
-        }
-      }
-      
       // Garantir que o diretório existe
       await this.initializeDirectory();
       
-      // Definir caminho de destino
+      // Definir caminho de destino no diretório documentDirectory (acessível sem permissões especiais)
       const destPath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
       
-      // Copiar o arquivo temporário para o diretório permanente
-      await FileSystem.copyAsync({
-        from: imageUri,
-        to: destPath
-      });
+      console.log(`[IMAGENS] Tentando salvar imagem em: ${destPath} de origem: ${imageUri}`);
       
-      console.log(`[IMAGENS] Imagem salva localmente em: ${destPath}`);
-      return destPath;
+      try {
+        // Copiar o arquivo temporário para o diretório permanente
+        await FileSystem.copyAsync({
+          from: imageUri,
+          to: destPath
+        });
+        
+        console.log(`[IMAGENS] Imagem salva localmente com sucesso em: ${destPath}`);
+        return destPath;
+      } catch (copyError) {
+        console.error('[IMAGENS] Erro ao copiar arquivo:', copyError);
+        
+        // Tentar abordagem alternativa se a cópia falhar
+        try {
+          // Ler o conteúdo do arquivo como base64
+          const base64Data = await FileSystem.readAsStringAsync(imageUri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          
+          // Escrever o arquivo no destino
+          await FileSystem.writeAsStringAsync(destPath, base64Data, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          
+          console.log(`[IMAGENS] Imagem salva via método alternativo em: ${destPath}`);
+          return destPath;
+        } catch (writeError) {
+          console.error('[IMAGENS] Erro ao escrever arquivo:', writeError);
+          throw writeError;
+        }
+      }
     } catch (error) {
       console.error('[IMAGENS] Erro ao salvar imagem local:', error);
+      // Log detalhado do erro para diagnóstico
+      if (error instanceof Error) {
+        console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
+      }
       return null;
     }
   }

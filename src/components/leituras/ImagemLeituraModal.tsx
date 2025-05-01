@@ -259,39 +259,31 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
 
   // Função visualizarImagemExistente modificada
   const visualizarImagemExistente = async () => {
-    if (!leituraId) return;
+    if (!capturedImage || !leituraId || !faturaId) {
+        return;
+      }
+      
+      setUploading(true);
 
     try {
-      // 1. Verificar se temos a imagem localmente
-      let caminhoLocal = await ImagemLeituraService.obterCaminhoImagemLocal(
-        leituraId
-      );
-
-      // 2. Se não temos localmente, tentar baixar do servidor
-      if (!caminhoLocal) {
-        const netInfo = await NetInfo.fetch();
-
-        if (netInfo.isConnected) {
-          // Mostrar toast ou indicador de carregamento
+        console.log(`[IMAGENS] Iniciando upload de imagem para leitura ${leituraId}`);
+    
+        // 1. Salvar a imagem localmente primeiro
+        console.log(`[IMAGENS] Tentando salvar localmente...`);
+        const caminhoLocal = await ImagemLeituraService.salvarImagemLocal(leituraId, capturedImage);
+        
+        if (!caminhoLocal) {
+          console.error('[IMAGENS] Falha ao salvar imagem localmente');
           Toast.show({
-            type: "info",
-            text1: "Baixando imagem...",
-            text2: "Aguarde enquanto baixamos a imagem do servidor",
-            position: "bottom",
-            visibilityTime: 2000,
+            type: 'error',
+            text1: 'Erro ao salvar imagem',
+            text2: 'Não foi possível salvar a imagem no dispositivo',
+            position: 'bottom',
+            visibilityTime: 3000,
           });
-
-          // Tentar baixar a imagem
-          caminhoLocal = await ImagemLeituraService.baixarImagem(leituraId);
-        } else {
-          // Se não temos localmente e não há conexão
-          Alert.alert(
-            "Sem conexão",
-            "Você está offline e a imagem não está disponível no dispositivo."
-          );
+          setUploading(false);
           return;
         }
-      }
 
       // 3. Se conseguimos obter a imagem, exibir
       if (caminhoLocal) {
@@ -306,12 +298,23 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
         );
       }
     } catch (error) {
-      console.error("Erro ao visualizar imagem:", error);
-      Alert.alert("Erro", "Não foi possível carregar a imagem.");
-    } finally {
-      onClose();
-    }
-  };
+        console.error('[IMAGENS] Erro ao processar imagem:', error);
+        // Log mais detalhado para diagnóstico
+        if (error instanceof Error) {
+          console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
+        }
+        
+        Toast.show({
+          type: 'error',
+          text1: 'Erro ao processar imagem',
+          text2: 'Ocorreu um erro inesperado. Tente novamente.',
+          position: 'bottom',
+          visibilityTime: 3000,
+        });
+      } finally {
+        setUploading(false);
+      }
+    };
 
   const handleConfirmOverwrite = () => {
     setShowConfirmOverwrite(false);
