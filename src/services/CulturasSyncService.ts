@@ -148,17 +148,30 @@ export const checkAndSyncCulturas = async (): Promise<void> => {
       return;
     }
     
+    // Verificar timestamp de última sincronização
+    const ultimaSincronizacao = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
+    if (ultimaSincronizacao) {
+      const ultimaData = new Date(ultimaSincronizacao).getTime();
+      const agora = new Date().getTime();
+      const duasHorasEmMS = 2 * 60 * 60 * 1000;
+      
+      // Se não passou o tempo mínimo, não sincroniza
+      if ((agora - ultimaData) <= duasHorasEmMS) {
+        return;
+      }
+    }
+    
     // Verificar se há atualizações pendentes
     const pendingDataStr = await AsyncStorage.getItem('pendingCulturasUpdates');
     if (!pendingDataStr) {
       return;
     }
     
-    const pendingData = JSON.parse(pendingDataStr) as Record<string, PendingCulturaData>;
+    const pendingData = JSON.parse(pendingDataStr);
     const pendingCount = Object.keys(pendingData).length;
     
     if (pendingCount > 0) {
-      // Mostrar toast informativo
+      // Mostrar toast informativo discreto
       Toast.show({
         type: 'info',
         text1: 'Sincronizando culturas',
@@ -167,7 +180,12 @@ export const checkAndSyncCulturas = async (): Promise<void> => {
       });
       
       // Iniciar sincronização
-      await syncPendingCulturas();
+      const resultado = await syncPendingCulturas();
+      
+      // Registrar timestamp de sincronização bem-sucedida
+      if (resultado.success) {
+        await AsyncStorage.setItem('culturas_ultima_sincronizacao', new Date().toISOString());
+      }
     }
   } catch (error) {
     console.error('Erro ao verificar sincronização de culturas:', error);

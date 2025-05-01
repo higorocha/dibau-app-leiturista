@@ -84,6 +84,19 @@ export const checkAndSync = async (): Promise<void> => {
       return;
     }
     
+    // Verificar timestamp de última sincronização
+    const ultimaSincronizacao = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
+    if (ultimaSincronizacao) {
+      const ultimaData = new Date(ultimaSincronizacao).getTime();
+      const agora = new Date().getTime();
+      const duasHorasEmMS = 2 * 60 * 60 * 1000;
+      
+      // Se não passou o tempo mínimo, não sincroniza
+      if ((agora - ultimaData) <= duasHorasEmMS) {
+        return;
+      }
+    }
+    
     // Verificar se há atualizações pendentes
     const pendingDataStr = await AsyncStorage.getItem('pendingLeituraUpdates');
     if (!pendingDataStr) {
@@ -94,16 +107,21 @@ export const checkAndSync = async (): Promise<void> => {
     const pendingCount = Object.keys(pendingData).length;
     
     if (pendingCount > 0) {
-      // Mostrar toast informativo
+      // Mostrar toast informativo discreto
       Toast.show({
         type: 'info',
-        text1: 'Sincronizando dados',
+        text1: 'Sincronizando em segundo plano',
         text2: `Enviando ${pendingCount} leituras pendentes...`,
         visibilityTime: 2000,
       });
       
       // Iniciar sincronização
-      await syncPendingLeituras();
+      const resultado = await syncPendingLeituras();
+      
+      // Registrar timestamp de sincronização bem-sucedida
+      if (resultado.success) {
+        await AsyncStorage.setItem('leituras_ultima_sincronizacao', new Date().toISOString());
+      }
     }
   } catch (error) {
     console.error('Erro ao verificar sincronização:', error);

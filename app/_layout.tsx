@@ -17,6 +17,8 @@ import { LeiturasProvider } from "@/src/contexts/LeiturasContext";
 import { checkAndSync } from "@/src/services/SyncService";
 import NetInfo from '@react-native-community/netinfo';
 import { checkAndSyncCulturas } from "@/src/services/CulturasSyncService";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 
 const toastConfig: ToastConfig = {
   success: (props: ToastProps) => (
@@ -79,23 +81,92 @@ export default function RootLayout() {
     if (loaded) {
       SplashScreen.hideAsync();
       
-      // Verificar e sincronizar após o app carregar
-      setTimeout(() => {
-        checkAndSync(); //sincronização de leituras
-        checkAndSyncCulturas(); //sincronização de culturas
-      }, 3000);
+      // Verificar e sincronizar após o app carregar, mas com um pequeno atraso
+      // para não impactar a inicialização e não bloquear a UI
+      const timer = setTimeout(() => {
+        // Verificar se passou o tempo mínimo desde a última sincronização
+        const verificarEhSincronizarSeNecessario = async () => {
+          try {
+            // Verificar leituras
+            const ultimaSincLeituras = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
+            const agora = new Date().getTime();
+            const duasHorasEmMS = 2 * 60 * 60 * 1000;
+            
+            let deveSincLeituras = true;
+            if (ultimaSincLeituras) {
+              const ultimaData = new Date(ultimaSincLeituras).getTime();
+              deveSincLeituras = (agora - ultimaData) > duasHorasEmMS;
+            }
+            
+            if (deveSincLeituras) {
+              checkAndSync(); // sincronização de leituras
+            }
+            
+            // Mesma lógica para culturas
+            const ultimaSincCulturas = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
+            let deveSincCulturas = true;
+            if (ultimaSincCulturas) {
+              const ultimaData = new Date(ultimaSincCulturas).getTime();
+              deveSincCulturas = (agora - ultimaData) > duasHorasEmMS;
+            }
+            
+            if (deveSincCulturas) {
+              checkAndSyncCulturas(); // sincronização de culturas
+            }
+          } catch (error) {
+            console.error('Erro ao verificar timestamp de sincronização:', error);
+          }
+        };
+        
+        verificarEhSincronizarSeNecessario();
+      }, 5000); // 5 segundos após inicialização
       
-      // Configurar listener de conectividade
-      const unsubscribe = NetInfo.addEventListener(state => {
+      // Configurar listener de conectividade com a mesma lógica
+      const unsubscribe = NetInfo.addEventListener(async state => {
         if (state.isConnected) {
-          // Quando a conexão é estabelecida, verificar pendências
-          checkAndSync(); //sincronização de leituras
-          checkAndSyncCulturas(); // sincronização de culturas
+          // Quando a conexão é estabelecida, verificar se deve sincronizar
+          const verificarEhSincronizarSeNecessario = async () => {
+            try {
+              // Verificar leituras
+              const ultimaSincLeituras = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
+              const agora = new Date().getTime();
+              const duasHorasEmMS = 2 * 60 * 60 * 1000;
+              
+              let deveSincLeituras = true;
+              if (ultimaSincLeituras) {
+                const ultimaData = new Date(ultimaSincLeituras).getTime();
+                deveSincLeituras = (agora - ultimaData) > duasHorasEmMS;
+              }
+              
+              if (deveSincLeituras) {
+                checkAndSync(); // sincronização de leituras
+                await AsyncStorage.setItem('leituras_ultima_sincronizacao', new Date().toISOString());
+              }
+              
+              // Mesma lógica para culturas
+              const ultimaSincCulturas = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
+              let deveSincCulturas = true;
+              if (ultimaSincCulturas) {
+                const ultimaData = new Date(ultimaSincCulturas).getTime();
+                deveSincCulturas = (agora - ultimaData) > duasHorasEmMS;
+              }
+              
+              if (deveSincCulturas) {
+                checkAndSyncCulturas(); // sincronização de culturas
+                await AsyncStorage.setItem('culturas_ultima_sincronizacao', new Date().toISOString());
+              }
+            } catch (error) {
+              console.error('Erro ao verificar timestamp de sincronização:', error);
+            }
+          };
+          
+          verificarEhSincronizarSeNecessario();
         }
       });
       
-      // Limpar listener
+      // Limpar listener e timer
       return () => {
+        clearTimeout(timer);
         unsubscribe();
       };
     }
