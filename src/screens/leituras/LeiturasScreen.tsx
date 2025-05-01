@@ -1,6 +1,6 @@
 // src/screens/leituras/LeiturasScreen.tsx
 import React, { useState, useEffect, useCallback } from "react";
-import axios from 'axios';
+import axios from "axios";
 import {
   View,
   Text,
@@ -19,9 +19,9 @@ import api from "../../api/axiosConfig";
 import LeituraCard from "../../components/leituras/LeituraCard";
 import ErrorMessage from "../../components/ErrorMessage";
 import { useTheme } from "@react-navigation/native";
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import Toast from 'react-native-toast-message';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import Toast from "react-native-toast-message";
 
 // Interface para o objeto de leitura mensal
 interface Fatura {
@@ -52,6 +52,8 @@ interface LeituraMensal {
   isAllFechada: boolean;
 }
 
+
+
 const LeiturasScreen: React.FC = () => {
   const [leituras, setLeituras] = useState<LeituraMensal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,12 +63,14 @@ const LeiturasScreen: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [isOffline, setIsOffline] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
-  const [sincronizandoEmBackground, setSincronizandoEmBackground] = useState(false);
-
+  const [sincronizandoEmBackground, setSincronizandoEmBackground] =
+    useState(false);
 
   const { user } = useAuth();
   const { colors } = useTheme();
   const { setFaturasSelecionadas, setMesAnoSelecionado } = useLeiturasContext();
+
+  
 
   // Função para verificar conexão
   const checkConnection = async () => {
@@ -78,19 +82,21 @@ const LeiturasScreen: React.FC = () => {
   // Função para carregar dados offline
   const carregarDadosOffline = async () => {
     try {
-      const dadosSalvos = await AsyncStorage.getItem('leituras_data');
-      const timestamp = await AsyncStorage.getItem('leituras_timestamp');
-      
+      const dadosSalvos = await AsyncStorage.getItem("leituras_data");
+      const timestamp = await AsyncStorage.getItem("leituras_timestamp");
+
       if (dadosSalvos) {
         const dados = JSON.parse(dadosSalvos);
         setLeituras(dados);
         setLastSyncTime(timestamp);
         setHasMore(false);
-        
+
         Toast.show({
-          type: 'info',
-          text1: 'Modo offline',
-          text2: `Usando dados salvos em ${new Date(timestamp || '').toLocaleString()}`,
+          type: "info",
+          text1: "Modo offline",
+          text2: `Usando dados salvos em ${new Date(
+            timestamp || ""
+          ).toLocaleString()}`,
           visibilityTime: 3000,
         });
       } else {
@@ -103,324 +109,406 @@ const LeiturasScreen: React.FC = () => {
   };
 
   // Função para verificar se deve sincronizar baseado no timestamp
-const deveAtualizar = useCallback(async () => {
-  try {
-    const ultimaSincronizacao = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
-    
-    if (!ultimaSincronizacao) {
-      return true; // Nunca sincronizou antes
+  const deveAtualizar = useCallback(async () => {
+    try {
+      const ultimaSincronizacao = await AsyncStorage.getItem(
+        "leituras_ultima_sincronizacao"
+      );
+
+      if (!ultimaSincronizacao) {
+        return true; // Nunca sincronizou antes
+      }
+
+      const ultimaData = new Date(ultimaSincronizacao).getTime();
+      const agora = new Date().getTime();
+      const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
+
+      // Verifica se passaram pelo menos 2 horas desde a última sincronização
+      return agora - ultimaData > duasHorasEmMS;
+    } catch (error) {
+      console.error("Erro ao verificar timestamp de sincronização:", error);
+      return true; // Em caso de erro, sincroniza por precaução
     }
-    
-    const ultimaData = new Date(ultimaSincronizacao).getTime();
-    const agora = new Date().getTime();
-    const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
-    
-    // Verifica se passaram pelo menos 2 horas desde a última sincronização
-    return (agora - ultimaData) > duasHorasEmMS;
-  } catch (error) {
-    console.error("Erro ao verificar timestamp de sincronização:", error);
-    return true; // Em caso de erro, sincroniza por precaução
-  }
-}, []);
+  }, []);
 
-// Função para salvar o timestamp da sincronização
-const salvarTimestampSincronizacao = async () => {
-  try {
-    await AsyncStorage.setItem('leituras_ultima_sincronizacao', new Date().toISOString());
-  } catch (error) {
-    console.error("Erro ao salvar timestamp de sincronização:", error);
-  }
-};
+  // Função para salvar o timestamp da sincronização
+  const salvarTimestampSincronizacao = async () => {
+    try {
+      await AsyncStorage.setItem(
+        "leituras_ultima_sincronizacao",
+        new Date().toISOString()
+      );
+    } catch (error) {
+      console.error("Erro ao salvar timestamp de sincronização:", error);
+    }
+  };
 
-const sincronizarDados = async () => {
-  if (sincronizandoEmBackground) {
-    console.log("[SYNC] Sincronização já em andamento, ignorando solicitação duplicada");
-    return;
-  }
-  
-  console.log("[SYNC] Iniciando sincronização em background");
-  try {
-    setSincronizandoEmBackground(true);
-    
-    // Verificar conexão antes de tentar sincronizar
-    const netInfo = await NetInfo.fetch();
-    console.log("[SYNC] Status da rede:", netInfo.isConnected ? "Conectado" : "Desconectado", 
-                "Tipo:", netInfo.type);
-    
-    if (!netInfo.isConnected) {
-      console.log("[SYNC] Sem conexão de rede, abortando sincronização");
-      Toast.show({
-        type: 'error',
-        text1: 'Sem conexão',
-        text2: 'Não foi possível sincronizar sem conexão com a internet',
-        visibilityTime: 2000,
-      });
-      setSincronizandoEmBackground(false);
+  const sincronizarDados = async () => {
+    // Evita múltiplas sincronizações simultâneas
+    if (sincronizandoEmBackground) {
+      console.log(
+        "[DEBUG] Sincronização já em andamento, ignorando solicitação duplicada"
+      );
       return;
     }
-    
-    // Indicador discreto de sincronização
-    Toast.show({
-      type: 'info',
-      text1: 'Sincronizando...',
-      text2: 'Atualizando dados em segundo plano',
-      visibilityTime: 2000,
-    });
-    
-    console.log("[SYNC] Enviando requisição para /faturamensal/app/leituras");
-    
-    // Adicionar timeout mais longo para ambientes com conexão instável
-    const response = await api.get("/faturamensal/app/leituras", {
-      timeout: 30000, // 30 segundos
-    });
-    
-    console.log("[SYNC] Resposta recebida, status:", response.status);
-    
-    if (response.data && response.data.success) {
-      console.log("[SYNC] Dados recebidos com sucesso");
-      const { data, timestamp } = response.data;
-      
-      // Garantir que data é do tipo esperado
-      const leiturasMensais = data as LeituraMensal[];
-      
-      // Log do tamanho dos dados recebidos
-      console.log("[SYNC] Tamanho dos dados recebidos:", 
-                  leiturasMensais ? leiturasMensais.length : 0, "leituras,", 
-                  JSON.stringify(leiturasMensais).length, "bytes");
-      
-      // --- ARMAZENAMENTO FRAGMENTADO ---
-      try {
-        // 1. Salvar índice dos meses disponíveis
-        const mesesDisponiveis = leiturasMensais.map(mes => mes.mesAno);
-        await AsyncStorage.setItem('leituras_meses_index', JSON.stringify(mesesDisponiveis));
-        console.log(`[SYNC] Salvo índice de ${mesesDisponiveis.length} meses`);
-        
-        // 2. Salvar cada mês separadamente
-        for (let i = 0; i < leiturasMensais.length; i++) {
-          const mes = leiturasMensais[i];
-          const chave = `leituras_mes_${mes.mesAno.replace("/", "_")}`;
-          await AsyncStorage.setItem(chave, JSON.stringify(mes));
-          console.log(`[SYNC] Salvos dados do mês ${mes.mesAno}`);
-        }
-        
-        // 3. Salvar timestamp
-        await AsyncStorage.setItem('leituras_timestamp', timestamp);
-        console.log("[SYNC] Dados salvos no AsyncStorage (fragmentados)");
-        
-        // Atualizar estado da interface
-        setLeituras(leiturasMensais);
-        setLastSyncTime(timestamp);
-        setHasMore(false);
-        
-        // Salvar timestamp da sincronização
-        await salvarTimestampSincronizacao();
-        console.log("[SYNC] Timestamp de sincronização atualizado");
-        
+
+    console.log("[DEBUG] sincronizarDados iniciado");
+    try {
+      setSincronizandoEmBackground(true);
+
+      // Verificar conexão antes de tentar sincronizar
+      const netInfo = await NetInfo.fetch();
+      console.log(
+        "[DEBUG] Status da rede:",
+        netInfo.isConnected ? "Conectado" : "Desconectado"
+      );
+
+      if (!netInfo.isConnected) {
+        console.log("[DEBUG] Sem conexão de rede, abortando sincronização");
         Toast.show({
-          type: 'success',
-          text1: 'Dados atualizados',
-          text2: 'Leituras sincronizadas com sucesso',
+          type: "error",
+          text1: "Sem conexão",
+          text2: "Não foi possível sincronizar sem conexão com a internet",
           visibilityTime: 2000,
         });
-      } catch (storageError) {
-        console.error("[SYNC] Erro ao salvar no AsyncStorage:", storageError);
-        // Mesmo com erro de armazenamento, atualizar a interface com os dados recebidos
-        setLeituras(leiturasMensais);
-        setLastSyncTime(timestamp);
-        setHasMore(false);
-        
+        return;
+      }
+
+      // Indicador discreto de sincronização
+      Toast.show({
+        type: "info",
+        text1: "Sincronizando...",
+        text2: "Atualizando dados em segundo plano",
+        visibilityTime: 2000,
+      });
+
+      console.log(
+        "[DEBUG] Enviando requisição para /faturamensal/app/leituras"
+      );
+
+      try {
+        // Requisição com timeout maior
+        const response = await api.get("/faturamensal/app/leituras", {
+          timeout: 30000, // 30 segundos
+        });
+
+        console.log("[DEBUG] Resposta recebida, status:", response.status);
+
+        if (response.data && response.data.success) {
+          console.log("[DEBUG] Dados recebidos com sucesso");
+          const { data, timestamp } = response.data;
+
+          // Garantir que data é do tipo esperado
+          const leiturasMensais = data as LeituraMensal[];
+
+          if (!leiturasMensais || leiturasMensais.length === 0) {
+            console.log("[DEBUG] Lista de leituras vazia na resposta");
+            Toast.show({
+              type: "warning",
+              text1: "Sem leituras disponíveis",
+              text2: "Nenhuma leitura disponível no momento",
+              visibilityTime: 3000,
+            });
+            return;
+          }
+
+          // Log do tamanho dos dados
+          console.log(
+            `[DEBUG] Recebidas ${leiturasMensais.length} leituras, ${
+              JSON.stringify(leiturasMensais).length
+            } bytes`
+          );
+
+          // ARMAZENAMENTO FRAGMENTADO
+          try {
+            // 1. Salvar índice dos meses
+            const mesesDisponiveis = leiturasMensais.map((mes) => mes.mesAno);
+            await AsyncStorage.setItem(
+              "leituras_meses_index",
+              JSON.stringify(mesesDisponiveis)
+            );
+            console.log(
+              `[DEBUG] Índice de ${mesesDisponiveis.length} meses salvo`
+            );
+
+            // 2. Salvar cada mês separadamente
+            for (let i = 0; i < leiturasMensais.length; i++) {
+              const mes = leiturasMensais[i];
+              const chave = `leituras_mes_${mes.mesAno.replace("/", "_")}`;
+              await AsyncStorage.setItem(chave, JSON.stringify(mes));
+              console.log(`[DEBUG] Dados do mês ${mes.mesAno} salvos`);
+            }
+
+            // 3. Salvar timestamp
+            await AsyncStorage.setItem("leituras_timestamp", timestamp);
+            console.log("[DEBUG] Dados fragmentados salvos com sucesso");
+
+            // Atualizar interface
+            setLeituras(leiturasMensais);
+            setLastSyncTime(timestamp);
+            setHasMore(false);
+
+            // Salvar timestamp de sincronização
+            await salvarTimestampSincronizacao();
+
+            Toast.show({
+              type: "success",
+              text1: "Dados atualizados",
+              text2: "Leituras sincronizadas com sucesso",
+              visibilityTime: 2000,
+            });
+          } catch (storageError) {
+            console.error(
+              "[DEBUG] Erro ao salvar no AsyncStorage:",
+              storageError
+            );
+
+            // Mesmo com erro, atualiza interface
+            setLeituras(leiturasMensais);
+            setLastSyncTime(timestamp);
+            setHasMore(false);
+          }
+        } else {
+          console.log("[DEBUG] Resposta sem dados válidos");
+          Toast.show({
+            type: "error",
+            text1: "Formato inválido",
+            text2: "Os dados recebidos estão em formato inválido",
+            visibilityTime: 3000,
+          });
+        }
+      } catch (apiError) {
+        console.error("[DEBUG] Erro na chamada de API:", apiError);
         Toast.show({
-          type: 'warning',
-          text1: 'Dados atualizados parcialmente',
-          text2: 'Houve um problema ao salvar dados para uso offline',
+          type: "error",
+          text1: "Erro no servidor",
+          text2: "Não foi possível obter dados do servidor",
           visibilityTime: 3000,
         });
       }
-    } else {
-      console.log("[SYNC] A resposta não contém dados válidos:", JSON.stringify(response.data));
-      Toast.show({
-        type: 'error',
-        text1: 'Erro de sincronização',
-        text2: 'Formato de dados inválido recebido do servidor',
-        visibilityTime: 3000,
-      });
+    } catch (error) {
+      console.error("[DEBUG] Erro geral na sincronização:", error);
+    } finally {
+      console.log("[DEBUG] sincronizarDados finalizado");
+      setSincronizandoEmBackground(false);
     }
-  } catch (error) {
-    // Log detalhado do erro com verificação de tipo segura
-    console.error("[SYNC] Erro ao sincronizar dados:", error);
-    
-    // Verificar se é um erro do Axios
-    if (axios.isAxiosError(error)) {
-      if (error.response) {
-        // A requisição foi feita e o servidor respondeu com status diferente de 2xx
-        console.error("[SYNC] Erro de resposta do servidor:", 
-                      "Status:", error.response.status,
-                      "Dados:", JSON.stringify(error.response.data));
-      } else if (error.request) {
-        // A requisição foi feita mas não houve resposta (timeout ou problema de rede)
-        console.error("[SYNC] Sem resposta do servidor (timeout ou problema de rede)");
-      } else {
-        // Erro ao configurar a requisição
-        console.error("[SYNC] Erro ao configurar requisição:", error.message);
-      }
-    } else {
-      // Outro tipo de erro
-      console.error("[SYNC] Erro não relacionado ao Axios:", typeof error, error);
-    }
-    
-    // Mostrar toast discreto de erro
-    Toast.show({
-      type: 'error',
-      text1: 'Erro na sincronização',
-      text2: 'Não foi possível conectar ao servidor',
-      visibilityTime: 3000,
-    });
-  } finally {
-    console.log("[SYNC] Sincronização finalizada");
-    setSincronizandoEmBackground(false);
-  }
-};
+  };
 
-// Nova função para carregar apenas dados locais
-const carregarDadosLocais = async () => {
-  try {
-    // Verificar se temos o índice de meses
-    const mesesIndexStr = await AsyncStorage.getItem('leituras_meses_index');
-    const timestamp = await AsyncStorage.getItem('leituras_timestamp');
-    
-    if (mesesIndexStr) {
+  // Nova função para carregar apenas dados locais
+  const carregarDadosLocais = async () => {
+    try {
+      console.log("[DEBUG] carregarDadosLocais iniciado");
+
+      // Verificar se temos o índice de meses
+      const mesesIndexStr = await AsyncStorage.getItem("leituras_meses_index");
+      const timestamp = await AsyncStorage.getItem("leituras_timestamp");
+
+      // Se não temos índice de meses, não temos dados locais
+      if (!mesesIndexStr) {
+        console.log("[DEBUG] Nenhum índice de meses encontrado");
+        return false;
+      }
+
+      console.log("[DEBUG] Índice de meses encontrado, processando...");
       const mesesIndex = JSON.parse(mesesIndexStr) as string[];
-      console.log(`[OFFLINE] Encontrados ${mesesIndex.length} meses salvos localmente`);
-      
+      console.log(
+        `[DEBUG] Encontrados ${mesesIndex.length} meses salvos localmente`
+      );
+
       // Carregar dados de cada mês
       const dadosCompletos: LeituraMensal[] = [];
-      
+      let dadosCarregados = false;
+
       for (const mesAno of mesesIndex) {
         const chave = `leituras_mes_${mesAno.replace("/", "_")}`;
+        console.log(`[DEBUG] Tentando carregar mês ${mesAno}`);
+
         const mesDataStr = await AsyncStorage.getItem(chave);
-        
+
         if (mesDataStr) {
           try {
             const mesData = JSON.parse(mesDataStr) as LeituraMensal;
             dadosCompletos.push(mesData);
+            dadosCarregados = true;
+            console.log(`[DEBUG] Mês ${mesAno} carregado com sucesso`);
           } catch (jsonError) {
-            console.error(`[OFFLINE] Erro ao parsear dados do mês ${mesAno}:`, jsonError);
+            console.error(
+              `[DEBUG] Erro ao parsear dados do mês ${mesAno}:`,
+              jsonError
+            );
           }
+        } else {
+          console.log(`[DEBUG] Não encontrado dados para o mês ${mesAno}`);
         }
       }
-      
+
+      // Se não carregamos nenhum dado, retornar falso
+      if (!dadosCarregados || dadosCompletos.length === 0) {
+        console.log("[DEBUG] Nenhum dado mensal foi carregado");
+        return false;
+      }
+
       // Ordenar por data (mais recente primeiro)
       dadosCompletos.sort((a, b) => {
-        const [mesA, anoA] = a.mesAno.split('/').map(Number);
-        const [mesB, anoB] = b.mesAno.split('/').map(Number);
-        
+        const [mesA, anoA] = a.mesAno.split("/").map(Number);
+        const [mesB, anoB] = b.mesAno.split("/").map(Number);
+
         if (anoA !== anoB) return anoB - anoA;
         return mesB - mesA;
       });
-      
-      if (dadosCompletos.length > 0) {
-        setLeituras(dadosCompletos);
-        setLastSyncTime(timestamp);
-        setHasMore(false);
-        
-        // Só mostrar toast se estiver offline
-        if (isOffline) {
-          Toast.show({
-            type: 'info',
-            text1: 'Modo offline',
-            text2: `Usando dados salvos em ${new Date(timestamp || '').toLocaleString()}`,
-            visibilityTime: 3000,
-          });
-        }
-        
-        return true;
+
+      console.log(
+        `[DEBUG] ${dadosCompletos.length} meses ordenados, atualizando estado`
+      );
+      setLeituras(dadosCompletos);
+      setLastSyncTime(timestamp);
+      setHasMore(false);
+
+      // Só mostrar toast se estiver offline
+      if (isOffline) {
+        Toast.show({
+          type: "info",
+          text1: "Modo offline",
+          text2: `Usando dados salvos em ${new Date(
+            timestamp || ""
+          ).toLocaleString()}`,
+          visibilityTime: 3000,
+        });
       }
+
+      return true;
+    } catch (error) {
+      console.error("[DEBUG] Erro ao carregar dados offline:", error);
+      return false;
     }
-    
-    // Se chegou aqui, não encontrou dados válidos
-    return false;
-  } catch (error) {
-    console.error("Erro ao carregar dados offline:", error);
-    return false;
-  }
-};
+  };
 
-// Função para limpar cache antigo (chamada uma vez após migração)
-const limparCacheAntigo = async () => {
-  try {
-    await AsyncStorage.removeItem('leituras_data');
-    console.log("[STORAGE] Cache antigo removido com sucesso");
-  } catch (error) {
-    console.error("[STORAGE] Erro ao remover cache antigo:", error);
-  }
-};
+  // Função para limpar cache antigo (chamada uma vez após migração)
+  const limparCacheAntigo = async () => {
+    try {
+      await AsyncStorage.removeItem("leituras_data");
+      console.log("[STORAGE] Cache antigo removido com sucesso");
+    } catch (error) {
+      console.error("[STORAGE] Erro ao remover cache antigo:", error);
+    }
+  };
 
-const carregarLeituras = useCallback(async (param?: boolean | number) => {
-  try {
-    // Determinar se é uma página ou flag para forçar sincronização
+  const carregarLeituras = useCallback(async (param?: boolean | number) => {
     const forcarSincronizacao = typeof param === 'boolean' ? param : false;
     const page = typeof param === 'number' ? param : 1;
     
-    // Se não estiver refreshing, mostre o loading apenas se não houver dados
-    if (!refreshing && leituras.length === 0) {
-      setLoading(true);
+    // Log para debugging
+    console.log(`[DEBUG] carregarLeituras iniciado - forçar: ${forcarSincronizacao}, página: ${page}`);
+    
+    try {
+      // Só mostrar loading se não estiver refreshing e for a primeira página ou lista vazia
+      if (!refreshing && (page === 1 || leituras.length === 0)) {
+        setLoading(true);
+      }
+      
+      setError("");
+  
+      // Primeiro, carregamos dados locais (apenas na primeira página)
+      let dadosLocaisEncontrados = false;
+      if (page === 1) {
+        console.log('[DEBUG] Tentando carregar dados locais');
+        dadosLocaisEncontrados = await carregarDadosLocais();
+        console.log(`[DEBUG] Dados locais encontrados: ${dadosLocaisEncontrados}`);
+      }
+      
+      // Verificar conexão
+      const isConnected = await checkConnection();
+      console.log(`[DEBUG] Dispositivo conectado: ${isConnected}`);
+      
+      // Verificar se devemos sincronizar (apenas se for primeira página ou forçado)
+      let deveSincronizar = false;
+      if (page === 1 || forcarSincronizacao) {
+        deveSincronizar = forcarSincronizacao || await deveAtualizar();
+        console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
+      }
+      
+      // Se está online, primeira página ou forçado, e deve sincronizar, fazemos a sincronização
+      if (isConnected && deveSincronizar && (page === 1 || forcarSincronizacao)) {
+        console.log('[DEBUG] Iniciando sincronização');
+        await sincronizarDados();
+      } else if (page > 1 && leituras.length === 0) {
+        // Se estamos tentando carregar mais páginas mas não temos dados, desabilitar paginação
+        console.log('[DEBUG] Lista vazia e tentando carregar mais páginas, desabilitando paginação');
+        setHasMore(false);
+      } else {
+        console.log('[DEBUG] Não vai sincronizar');
+      }
+      
+      // Atualizar currentPage apenas se houver dados e for carregamento de página adicional
+      if (typeof param === 'number' && leituras.length > 0) {
+        setCurrentPage(page);
+      }
+    } catch (error) {
+      console.error("[DEBUG] Erro ao carregar leituras:", error);
+      setError("Falha ao carregar as leituras. Verifique sua conexão.");
+    } finally {
+      console.log('[DEBUG] carregarLeituras finalizado, definindo loading e refreshing como false');
+      setLoading(false);
+      setRefreshing(false);
     }
-    
-    setError("");
-
-    // Primeiro, carregamos dados locais para exibição rápida
-    await carregarDadosLocais();
-    
-    // Verificar conexão
-    const isConnected = await checkConnection();
-    
-    // Verificar se devemos sincronizar
-    const deveSincronizar = forcarSincronizacao || await deveAtualizar();
-    
-    // Se está online e deve sincronizar, fazemos em background
-    if (isConnected && deveSincronizar) {
-      sincronizarDados();
-    }
-    
-    // Atualizar currentPage se uma página foi especificada
-    if (typeof param === 'number') {
-      setCurrentPage(page);
-    }
-  } catch (error) {
-    console.error("Erro ao carregar leituras:", error);
-    setError("Falha ao carregar as leituras. Verifique sua conexão.");
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-}, [leituras.length, refreshing, deveAtualizar]);
+  }, [leituras.length, refreshing, deveAtualizar, sincronizarDados]);
 
   const loadMore = useCallback(() => {
-    if (!loading && hasMore) {
+    // Adicionado para debugging
+    console.log(
+      "[DEBUG] loadMore chamado - hasMore:",
+      hasMore,
+      "loading:",
+      loading,
+      "leituras:",
+      leituras.length
+    );
+
+    // *** CORREÇÃO PRINCIPAL: Não carregue mais se a lista estiver vazia ***
+    if (!loading && hasMore && leituras.length > 0) {
       carregarLeituras(currentPage + 1);
+    } else if (leituras.length === 0) {
+      // Se a lista estiver vazia, desabilitar carregamento adicional
+      setHasMore(false);
     }
-  }, [loading, hasMore, currentPage, carregarLeituras]);
+  }, [loading, hasMore, currentPage, carregarLeituras, leituras.length]);
 
   useEffect(() => {
-    // Migrar para o novo formato de armazenamento (uma vez só)
-    const verificarMigracao = async () => {
-      const jaFezMigracao = await AsyncStorage.getItem('leituras_migracao_realizada');
-      if (!jaFezMigracao) {
-        console.log("[STORAGE] Iniciando migração de formato de armazenamento");
-        await limparCacheAntigo();
-        await AsyncStorage.setItem('leituras_migracao_realizada', 'true');
+    console.log("[DEBUG] useEffect principal iniciado");
+    
+    // Verificar migração e inicializar dados
+    const inicializar = async () => {
+      try {
+        // Verificar migração de dados (uma vez só)
+        const jaFezMigracao = await AsyncStorage.getItem('leituras_migracao_realizada');
+        if (!jaFezMigracao) {
+          console.log("[DEBUG] Realizando migração de dados");
+          await limparCacheAntigo();
+          await AsyncStorage.setItem('leituras_migracao_realizada', 'true');
+        }
+  
+        // Forçar sincronização na primeira execução
+        console.log("[DEBUG] Forçando sincronização inicial");
+        await carregarLeituras(true); // Forçar sincronização
+      } catch (error) {
+        console.error('[DEBUG] Erro ao inicializar:', error);
       }
     };
     
-    verificarMigracao();
-    carregarLeituras();
+    // Inicializar o app
+    inicializar();
     
     // Verificar conexão periodicamente
     const intervalId = setInterval(async () => {
       await checkConnection();
     }, 10000);
     
-    return () => clearInterval(intervalId);
+    console.log("[DEBUG] useEffect principal configurado");
+    
+    return () => {
+      console.log("[DEBUG] useEffect principal sendo limpo");
+      clearInterval(intervalId);
+    };
   }, []);
 
   const onRefresh = () => {
@@ -449,7 +537,25 @@ const carregarLeituras = useCallback(async (param?: boolean | number) => {
       </View>
     );
   };
-
+  
+  const EmptyListComponent = React.memo(() => {
+    const handleRetry = useCallback(() => {
+      // Forçar sincronização
+      carregarLeituras(true);
+    }, []);
+    
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyText}>Nenhuma leitura encontrada</Text>
+        <TouchableOpacity
+          style={styles.reloadButton}
+          onPress={handleRetry}
+        >
+          <Text style={styles.reloadButtonText}>Tentar novamente</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  });
   return (
     <SafeAreaView style={styles.container}>
       {/* Indicador de modo offline */}
@@ -459,7 +565,7 @@ const carregarLeituras = useCallback(async (param?: boolean | number) => {
           <Text style={styles.offlineText}>Modo offline</Text>
         </View>
       )}
-      
+
       {/* Mensagem de erro, caso exista */}
       {error ? <ErrorMessage error={error} visible={!!error} /> : null}
 
@@ -472,6 +578,7 @@ const carregarLeituras = useCallback(async (param?: boolean | number) => {
       ) : (
         <FlatList
           data={leituras}
+          ListEmptyComponent={loading ? null : <EmptyListComponent />}
           keyExtractor={(item) => item.mesAno}
           renderItem={({ item }) => (
             <LeituraCard
@@ -485,6 +592,7 @@ const carregarLeituras = useCallback(async (param?: boolean | number) => {
               isAllFechada={item.isAllFechada}
             />
           )}
+          onEndReached={leituras.length > 0 ? loadMore : undefined}
           contentContainerStyle={styles.listContent}
           refreshControl={
             <RefreshControl
@@ -499,25 +607,14 @@ const carregarLeituras = useCallback(async (param?: boolean | number) => {
               {lastSyncTime && (
                 <View style={styles.syncInfo}>
                   <Text style={styles.syncText}>
-                    Última sincronização: {new Date(lastSyncTime).toLocaleString()}
+                    Última sincronização:{" "}
+                    {new Date(lastSyncTime).toLocaleString()}
                   </Text>
                 </View>
               )}
             </>
           }
-          onEndReached={loadMore}
           onEndReachedThreshold={0.5}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>Nenhuma leitura encontrada</Text>
-              <TouchableOpacity
-                style={styles.reloadButton}
-                onPress={() => carregarLeituras(1)}
-              >
-                <Text style={styles.reloadButtonText}>Tentar novamente</Text>
-              </TouchableOpacity>
-            </View>
-          }
         />
       )}
     </SafeAreaView>
@@ -593,26 +690,26 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   offlineBar: {
-    backgroundColor: '#ff6b6b',
+    backgroundColor: "#ff6b6b",
     padding: 8,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
   },
   offlineText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    color: "#fff",
+    fontWeight: "bold",
     marginLeft: 8,
   },
   syncInfo: {
     padding: 16,
-    alignItems: 'center',
+    alignItems: "center",
     marginTop: 10,
   },
   syncText: {
     fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
+    color: "#666",
+    fontStyle: "italic",
   },
 });
 

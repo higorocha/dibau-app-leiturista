@@ -19,60 +19,27 @@ class ImagemLeituraService {
     const imagensStatus: ImageLeituraStatus = {};
     
     try {
-      if (!faturas || faturas.length === 0) {
-        console.log("[IMAGENS] Nenhuma fatura para verificar");
-        return imagensStatus;
+      console.log("[DEBUG] Iniciando verificação de imagens para", faturas.length, "faturas");
+      
+      // Definir todas como false por padrão primeiro
+      for (const fatura of faturas) {
+        imagensStatus[fatura.id] = false;
       }
       
-      console.log("[IMAGENS] Verificando imagens para", faturas.length, "faturas");
+      // Verificar apenas as primeiras 20 faturas para não sobrecarregar
+      const faturasParaVerificar = faturas.slice(0, 20);
       
-      // Para evitar problemas de desempenho, processamos em lotes
-      const BATCH_SIZE = 20;
-      let processados = 0;
-      
-      // Cache para IDs que já verificamos
-      const cacheStatus = new Map<number, boolean>();
-      
-      for (let i = 0; i < faturas.length; i += BATCH_SIZE) {
-        const lote = faturas.slice(i, i + BATCH_SIZE);
-        
-        for (const fatura of lote) {
-          // Verificar se temos a info no objeto da leitura
-          if (fatura.Leitura) {
-            const leituraId = fatura.Leitura.id;
-            const faturaId = fatura.id;
-            
-            // Usar cache para evitar duplicação
-            if (cacheStatus.has(leituraId)) {
-              imagensStatus[faturaId] = cacheStatus.get(leituraId)!;
-            } else {
-              const temImagem = !!fatura.Leitura.imagem_leitura;
-              imagensStatus[faturaId] = temImagem;
-              cacheStatus.set(leituraId, temImagem);
-              
-              // Salvar em cache para reutilização
-              await AsyncStorage.setItem(`imagem_status_${leituraId}`, 
-                                         JSON.stringify({tem: temImagem, timestamp: Date.now()}));
-            }
-          } else {
-            imagensStatus[fatura.id] = false;
-          }
-        }
-        
-        processados += lote.length;
-        console.log(`[IMAGENS] Processadas ${processados}/${faturas.length} faturas`);
-        
-        // Pequena pausa a cada lote para não bloquear a UI
-        if (i + BATCH_SIZE < faturas.length) {
-          await new Promise(resolve => setTimeout(resolve, 5));
+      for (const fatura of faturasParaVerificar) {
+        // Verificar se tem imagem_leitura diretamente no objeto Leitura
+        if (fatura.Leitura && typeof fatura.Leitura.imagem_leitura === 'string' && fatura.Leitura.imagem_leitura.length > 0) {
+          imagensStatus[fatura.id] = true;
         }
       }
       
-      // Log de resumo
       const totalComImagem = Object.values(imagensStatus).filter(Boolean).length;
-      console.log(`[IMAGENS] Total de faturas com imagens: ${totalComImagem} de ${faturas.length}`);
+      console.log(`[DEBUG] Verificação rápida: ${totalComImagem} faturas com imagens de ${faturas.length} total`);
     } catch (error) {
-      console.error('[IMAGENS] Erro ao verificar imagens:', error);
+      console.error('[DEBUG] Erro ao verificar imagens:', error);
     }
     
     return imagensStatus;
