@@ -21,7 +21,7 @@ import ImagePreviewModal from "./ImagePreviewModal";
 import CameraPermissionRequestModal from "./CameraPermissionRequestModal";
 import ImagePreviewView from "./ImagePreviewView";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from "expo-file-system";
 
 interface ImagemLeituraModalProps {
   isVisible: boolean;
@@ -264,34 +264,48 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
       console.log("[IMAGENS] Erro: leituraId ou faturaId não definidos");
       return;
     }
-  
+
     try {
-      console.log(`[IMAGENS] Iniciando visualização da imagem para leitura ID: ${leituraId}`);
+      console.log(
+        `[IMAGENS] Iniciando visualização da imagem para leitura ID: ${leituraId}`
+      );
       setUploading(true); // Mostrar indicador de carregamento
-  
+
       // 1. Verificar se a imagem existe localmente
-      let caminhoLocal = await ImagemLeituraService.obterCaminhoImagemLocal(leituraId);
-      console.log(`[IMAGENS] Caminho local: ${caminhoLocal || 'não encontrado'}`);
-  
+      let caminhoLocal = await ImagemLeituraService.obterCaminhoImagemLocal(
+        leituraId
+      );
+      console.log(
+        `[IMAGENS] Caminho local: ${caminhoLocal || "não encontrado"}`
+      );
+
       // 2. Se não existir localmente, tentar baixar do servidor
       if (!caminhoLocal) {
         const netInfo = await NetInfo.fetch();
-        
+
         if (netInfo.isConnected) {
-          console.log('[IMAGENS] Não encontrado localmente, tentando baixar do servidor...');
+          console.log(
+            "[IMAGENS] Não encontrado localmente, tentando baixar do servidor..."
+          );
           Toast.show({
-            type: 'info',
-            text1: 'Baixando imagem...',
-            text2: 'Aguarde enquanto baixamos a imagem do servidor',
-            position: 'bottom',
+            type: "info",
+            text1: "Baixando imagem...",
+            text2: "Aguarde enquanto baixamos a imagem do servidor",
+            position: "bottom",
             visibilityTime: 2000,
           });
-          
-          // Tentar baixar a imagem
+
+          // Tentar baixar a imagem (com a nova lógica que consulta a API diretamente)
           caminhoLocal = await ImagemLeituraService.baixarImagem(leituraId);
-          console.log(`[IMAGENS] Download concluído, caminho: ${caminhoLocal || 'falha no download'}`);
+          console.log(
+            `[IMAGENS] Download concluído, caminho: ${
+              caminhoLocal || "falha no download"
+            }`
+          );
         } else {
-          console.log('[IMAGENS] Sem conexão e imagem não disponível localmente');
+          console.log(
+            "[IMAGENS] Sem conexão e imagem não disponível localmente"
+          );
           Alert.alert(
             "Sem conexão",
             "Você está offline e a imagem não está disponível no dispositivo."
@@ -300,34 +314,46 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
           return;
         }
       }
-  
+
       // 3. Se conseguimos obter a imagem, exibir
       if (caminhoLocal) {
-        console.log(`[IMAGENS] Preparando para exibir imagem de: ${caminhoLocal}`);
-        
+        console.log(
+          `[IMAGENS] Preparando para exibir imagem de: ${caminhoLocal}`
+        );
+
         // Verificar se o arquivo realmente existe
         const fileInfo = await FileSystem.getInfoAsync(caminhoLocal);
         if (!fileInfo.exists) {
-          console.log(`[IMAGENS] ERRO: Arquivo não existe apesar do caminho ser válido`);
-          Alert.alert("Erro", "Arquivo de imagem não encontrado no dispositivo.");
+          console.log(
+            `[IMAGENS] ERRO: Arquivo não existe apesar do caminho ser válido`
+          );
+          Alert.alert(
+            "Erro",
+            "Arquivo de imagem não encontrado no dispositivo."
+          );
           setUploading(false);
           return;
         }
-        
-        console.log(`[IMAGENS] Arquivo existe, tamanho: ${fileInfo.size} bytes`);
-        
+
+        console.log(
+          `[IMAGENS] Arquivo existe, tamanho: ${fileInfo.size} bytes`
+        );
+
         // Importante: Fechar qualquer modal que esteja aberto antes de mostrar o preview
         setShowConfirmOverwrite(false);
-        
+
         // Pequeno timeout para garantir que o primeiro modal foi fechado
-        setTimeout(() => {
-          setImagePreviewUri(caminhoLocal);
-          setShowImagePreview(true);
-          console.log('[IMAGENS] Estados atualizados: showImagePreview=true, uri definido');
-          setUploading(false);
-        }, 300);
+
+        setImagePreviewUri(caminhoLocal);
+        setShowImagePreview(true);
+        console.log(
+          "[IMAGENS] Estados atualizados: showImagePreview=true, uri definido"
+        );
+        setUploading(false);
       } else {
-        console.log('[IMAGENS] Não foi possível obter a imagem de nenhuma fonte');
+        console.log(
+          "[IMAGENS] Não foi possível obter a imagem de nenhuma fonte"
+        );
         Alert.alert(
           "Erro",
           "Não foi possível carregar a imagem. Tente novamente mais tarde."
@@ -335,20 +361,25 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
         setUploading(false);
       }
     } catch (error) {
-      console.error('[IMAGENS] Erro ao visualizar imagem:', error);
+      console.error("[IMAGENS] Erro ao visualizar imagem:", error);
       // Log mais detalhado para diagnóstico
       if (error instanceof Error) {
-        console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
+        console.error(
+          "[IMAGENS] Erro detalhado:",
+          error.name,
+          error.message,
+          error.stack
+        );
       }
-      
+
       Toast.show({
-        type: 'error',
-        text1: 'Erro ao carregar imagem',
-        text2: 'Ocorreu um erro inesperado. Tente novamente.',
-        position: 'bottom',
+        type: "error",
+        text1: "Erro ao carregar imagem",
+        text2: "Ocorreu um erro inesperado. Tente novamente.",
+        position: "bottom",
         visibilityTime: 3000,
       });
-      
+
       setUploading(false);
     }
   };
@@ -369,7 +400,8 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
           isVisible &&
           !showPreview &&
           !showConfirmOverwrite &&
-          !showPermissionModal
+          !showPermissionModal &&
+          !showImagePreview
         }
         transparent={true}
         animationType="slide"
@@ -469,7 +501,10 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
       <ImagePreviewView
         isVisible={showImagePreview}
         imageUri={imagePreviewUri}
-        onClose={() => setShowImagePreview(false)}
+        onClose={() => {
+          setShowImagePreview(false); // Fecha a visualização da imagem
+          onClose(); // Fecha o modal principal (atualiza `isVisible`)
+        }}
       />
 
       {/* Modal de permissão de câmera personalizado */}
