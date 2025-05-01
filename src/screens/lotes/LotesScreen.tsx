@@ -183,20 +183,27 @@ const LotesScreen: React.FC = () => {
 
   const deveAtualizar = useCallback(async () => {
     try {
+      // Verificar timestamp da última sincronização
       const ultimaSincronizacao = await AsyncStorage.getItem(
-        "lotes_ultima_sincronizacao"
+        "lotes_ultima_sincronizacao" // ou "leituras_ultima_sincronizacao" para LeiturasScreen
       );
-
+  
       if (!ultimaSincronizacao) {
+        console.log("[DEBUG] Nenhuma sincronização anterior encontrada, deve sincronizar");
         return true; // Nunca sincronizou antes
       }
-
+  
       const ultimaData = new Date(ultimaSincronizacao).getTime();
       const agora = new Date().getTime();
       const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
-
+  
       // Verifica se passaram pelo menos 2 horas desde a última sincronização
-      return agora - ultimaData > duasHorasEmMS;
+      const deveSincronizar = agora - ultimaData > duasHorasEmMS;
+      console.log(`[DEBUG] Última sincronização: ${new Date(ultimaData).toLocaleString()}`);
+      console.log(`[DEBUG] Tempo decorrido: ${Math.floor((agora - ultimaData) / 60000)} minutos`);
+      console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
+      
+      return deveSincronizar;
     } catch (error) {
       console.error("Erro ao verificar timestamp de sincronização:", error);
       return true; // Em caso de erro, sincroniza por precaução
@@ -276,8 +283,8 @@ const LotesScreen: React.FC = () => {
       // Indicador discreto de sincronização
       Toast.show({
         type: "info",
-        text1: "Sincronizando dados...",
-        text2: "Atualizando em segundo plano",
+        text1: "Sincronizando Lotes...",
+        text2: "Atualizando dados de lotes em segundo plano",
         visibilityTime: 2000,
       });
       
@@ -286,7 +293,7 @@ const LotesScreen: React.FC = () => {
       const culturasResponse = await api.get("/culturas");
       
       // Garantir que todos os lotes tenham valores para campos obrigatórios
-      const lotesCompletos = lotesResponse.data.map((lote: any) => ({
+      const lotesCompletos = lotesResponse.data.map((lote: Lote) => ({
         ...lote,
         areaLote: lote.areaLote || 0,
         sobraarea: lote.sobraarea || 0,
@@ -321,8 +328,8 @@ const LotesScreen: React.FC = () => {
       
       Toast.show({
         type: "success",
-        text1: "Dados atualizados",
-        text2: "Sincronização completa",
+        text1: "Lotes atualizados",
+        text2: "Dados de lotes sincronizados com sucesso",
         visibilityTime: 2000,
       });
     } catch (error) {

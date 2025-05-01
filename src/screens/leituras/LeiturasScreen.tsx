@@ -111,20 +111,27 @@ const LeiturasScreen: React.FC = () => {
   // Função para verificar se deve sincronizar baseado no timestamp
   const deveAtualizar = useCallback(async () => {
     try {
+      // Verificar timestamp da última sincronização
       const ultimaSincronizacao = await AsyncStorage.getItem(
-        "leituras_ultima_sincronizacao"
+         "leituras_ultima_sincronizacao"
       );
-
+  
       if (!ultimaSincronizacao) {
+        console.log("[DEBUG] Nenhuma sincronização anterior encontrada, deve sincronizar");
         return true; // Nunca sincronizou antes
       }
-
+  
       const ultimaData = new Date(ultimaSincronizacao).getTime();
       const agora = new Date().getTime();
       const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
-
+  
       // Verifica se passaram pelo menos 2 horas desde a última sincronização
-      return agora - ultimaData > duasHorasEmMS;
+      const deveSincronizar = agora - ultimaData > duasHorasEmMS;
+      console.log(`[DEBUG] Última sincronização: ${new Date(ultimaData).toLocaleString()}`);
+      console.log(`[DEBUG] Tempo decorrido: ${Math.floor((agora - ultimaData) / 60000)} minutos`);
+      console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
+      
+      return deveSincronizar;
     } catch (error) {
       console.error("Erro ao verificar timestamp de sincronização:", error);
       return true; // Em caso de erro, sincroniza por precaução
@@ -151,18 +158,18 @@ const LeiturasScreen: React.FC = () => {
       );
       return;
     }
-
+  
     console.log("[DEBUG] sincronizarDados iniciado");
     try {
       setSincronizandoEmBackground(true);
-
+  
       // Verificar conexão antes de tentar sincronizar
       const netInfo = await NetInfo.fetch();
       console.log(
         "[DEBUG] Status da rede:",
         netInfo.isConnected ? "Conectado" : "Desconectado"
       );
-
+  
       if (!netInfo.isConnected) {
         console.log("[DEBUG] Sem conexão de rede, abortando sincronização");
         Toast.show({
@@ -173,34 +180,34 @@ const LeiturasScreen: React.FC = () => {
         });
         return;
       }
-
+  
       // Indicador discreto de sincronização
       Toast.show({
         type: "info",
-        text1: "Sincronizando...",
-        text2: "Atualizando dados em segundo plano",
+        text1: "Sincronizando Leituras...",
+        text2: "Atualizando dados de leituras em segundo plano",
         visibilityTime: 2000,
       });
-
+  
       console.log(
         "[DEBUG] Enviando requisição para /faturamensal/app/leituras"
       );
-
+  
       try {
         // Requisição com timeout maior
         const response = await api.get("/faturamensal/app/leituras", {
           timeout: 30000, // 30 segundos
         });
-
+  
         console.log("[DEBUG] Resposta recebida, status:", response.status);
-
+  
         if (response.data && response.data.success) {
           console.log("[DEBUG] Dados recebidos com sucesso");
           const { data, timestamp } = response.data;
-
+  
           // Garantir que data é do tipo esperado
           const leiturasMensais = data as LeituraMensal[];
-
+  
           if (!leiturasMensais || leiturasMensais.length === 0) {
             console.log("[DEBUG] Lista de leituras vazia na resposta");
             Toast.show({
@@ -211,14 +218,14 @@ const LeiturasScreen: React.FC = () => {
             });
             return;
           }
-
+  
           // Log do tamanho dos dados
           console.log(
             `[DEBUG] Recebidas ${leiturasMensais.length} leituras, ${
               JSON.stringify(leiturasMensais).length
             } bytes`
           );
-
+  
           // ARMAZENAMENTO FRAGMENTADO
           try {
             // 1. Salvar índice dos meses
@@ -230,7 +237,7 @@ const LeiturasScreen: React.FC = () => {
             console.log(
               `[DEBUG] Índice de ${mesesDisponiveis.length} meses salvo`
             );
-
+  
             // 2. Salvar cada mês separadamente
             for (let i = 0; i < leiturasMensais.length; i++) {
               const mes = leiturasMensais[i];
@@ -238,23 +245,23 @@ const LeiturasScreen: React.FC = () => {
               await AsyncStorage.setItem(chave, JSON.stringify(mes));
               console.log(`[DEBUG] Dados do mês ${mes.mesAno} salvos`);
             }
-
+  
             // 3. Salvar timestamp
             await AsyncStorage.setItem("leituras_timestamp", timestamp);
             console.log("[DEBUG] Dados fragmentados salvos com sucesso");
-
+  
             // Atualizar interface
             setLeituras(leiturasMensais);
             setLastSyncTime(timestamp);
             setHasMore(false);
-
+  
             // Salvar timestamp de sincronização
             await salvarTimestampSincronizacao();
-
+  
             Toast.show({
               type: "success",
-              text1: "Dados atualizados",
-              text2: "Leituras sincronizadas com sucesso",
+              text1: "Leituras atualizadas",
+              text2: "Dados de leituras sincronizados com sucesso",
               visibilityTime: 2000,
             });
           } catch (storageError) {
@@ -262,7 +269,7 @@ const LeiturasScreen: React.FC = () => {
               "[DEBUG] Erro ao salvar no AsyncStorage:",
               storageError
             );
-
+  
             // Mesmo com erro, atualiza interface
             setLeituras(leiturasMensais);
             setLastSyncTime(timestamp);
@@ -423,7 +430,13 @@ const LeiturasScreen: React.FC = () => {
       // Verificar se devemos sincronizar (apenas se for primeira página ou forçado)
       let deveSincronizar = false;
       if (page === 1 || forcarSincronizacao) {
-        deveSincronizar = forcarSincronizacao || await deveAtualizar();
+        // Apenas forçar a sincronização se o usuário explicitamente pediu (pull-to-refresh)
+        // ou se já passou o tempo mínimo desde a última sincronização
+        if (forcarSincronizacao) {
+          deveSincronizar = true;
+        } else {
+          deveSincronizar = await deveAtualizar();
+        }
         console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
       }
       
