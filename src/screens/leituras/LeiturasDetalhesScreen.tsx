@@ -48,6 +48,7 @@ interface Fatura {
     codHidrometro: string;
     modelo: string;
     registro_atual: number;
+    x10: boolean;
   };
   LoteAgricola: {
     id: number;
@@ -174,15 +175,11 @@ const FaturaItem = memo<FaturaItemProps>(
                 Leitura Anterior:{" "}
                 {formatarNumeroComMilhar(item.leitura_anterior || 0)} m³
                 {item.data_leitura_anterior ? (
-                  <Text
-                    style={[styles.infoTextSmall, isTablet && { fontSize: 12 }]}
-                  >
-                    {"\n"}
+                  <Text style={[styles.infoText, isTablet && { fontSize: 14 }]}>
+                    {" em "}
                     {formatarData(item.data_leitura_anterior)}
                   </Text>
-                ) : (
-                  ""
-                )}
+                ) : null}
               </Text>
             </View>
           </View>
@@ -210,20 +207,47 @@ const FaturaItem = memo<FaturaItemProps>(
               Leitura Atual
             </Text>
             {isEditing ? (
-              <MaskedNumberInput
-                style={styles.input}
-                value={leituraAtuais[item.id]}
-                onChangeText={(text: string) =>
-                  setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
-                }
-                placeholder="Informe a leitura"
-              />
+              <View>
+                <MaskedNumberInput
+                  style={styles.input}
+                  value={leituraAtuais[item.id]}
+                  onChangeText={(text: string) =>
+                    setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
+                  }
+                  placeholder="Informe a leitura"
+                />
+                {item.Hidrometro.x10 && (
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      marginTop: 4,
+                    }}
+                  >
+                    <View style={styles.x10Badge}>
+                      <Text style={styles.x10BadgeText}>x10</Text>
+                    </View>
+                    <Text style={[styles.multiplicadorText, { marginLeft: 4 }]}>
+                      Valor será multiplicado por 10
+                    </Text>
+                  </View>
+                )}
+              </View>
             ) : (
-              <Text style={[styles.readingValue, isTablet && { fontSize: 15 }]}>
-                {item.Leitura
-                  ? formatarNumeroComMilhar(item.Leitura.leitura) + " m³"
-                  : "-"}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Text
+                  style={[styles.readingValue, isTablet && { fontSize: 15 }]}
+                >
+                  {item.Leitura
+                    ? formatarNumeroComMilhar(item.Leitura.leitura) + " m³"
+                    : "-"}
+                </Text>
+                {item.Hidrometro.x10 && (
+                  <View style={styles.x10Badge}>
+                    <Text style={styles.x10BadgeText}>x10</Text>
+                  </View>
+                )}
+              </View>
             )}
           </View>
 
@@ -731,17 +755,27 @@ const LeiturasDetalhesScreen: React.FC = () => {
     }
 
     // Remover a formatação para enviar para a API
-    const leituraAtualNum = parseFloat(
+    let leituraAtualNum = parseFloat(
       leituraAtual.replace(/\./g, "").replace(",", ".")
     );
-    const leituraAnterior = fatura.leitura_anterior || 0;
+    // Verificar se o hidrômetro tem flag x10 ativada
+    const multiplicarPor10 = fatura.Hidrometro.x10 === true;
 
     // Verificar se a leitura atual é menor que a anterior
-    if (leituraAtualNum < leituraAnterior) {
+    const leituraAnterior = fatura.leitura_anterior || 0;
+
+    // CORREÇÃO: Para a comparação, aplicamos a multiplicação antes
+    // para garantir que a comparação seja feita na mesma base
+    const leituraAtualParaComparacao = multiplicarPor10
+      ? leituraAtualNum * 10
+      : leituraAtualNum;
+
+    // Verificar se a leitura atual é menor que a anterior
+    if (leituraAtualParaComparacao < leituraAnterior) {
       const confirmaZerado = await new Promise<boolean>((resolve) => {
         Alert.alert(
           "Confirmação",
-          `A leitura atual (${leituraAtualNum}) é menor que a anterior (${leituraAnterior}). Deseja continuar mesmo assim?`,
+          `A leitura atual (${leituraAtualParaComparacao}) é menor que a anterior (${leituraAnterior}). Deseja continuar mesmo assim?`,
           [
             { text: "Não", onPress: () => resolve(false), style: "cancel" },
             { text: "Sim", onPress: () => resolve(true) },
@@ -750,6 +784,12 @@ const LeiturasDetalhesScreen: React.FC = () => {
       });
 
       if (!confirmaZerado) return;
+    }
+
+    // NOVO: Multiplicar o valor por 10 se necessário
+    if (multiplicarPor10) {
+      leituraAtualNum = leituraAtualNum * 10;
+      console.log(`[LEITURA] Multiplicando valor por 10: ${leituraAtualNum}`);
     }
 
     // Mostrar indicador de carregamento para esta linha
@@ -1097,7 +1137,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
           }`
         );
       }
-  
+
       return (
         <FaturaItem
           item={item}
@@ -1142,7 +1182,6 @@ const LeiturasDetalhesScreen: React.FC = () => {
       handleOpenImagemModal,
     ]
   );
-
 
   // Função chamada quando uma imagem é enviada com sucesso
   const handleImagemUploaded = (faturaId: number) => {
@@ -1741,6 +1780,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 6,
     elevation: 1,
+  },
+
+  multiplicadorText: {
+    fontSize: 11,
+    color: "#e63946",
+    fontStyle: "italic",
+  },
+  x10Badge: {
+    marginLeft: 4,
+    backgroundColor: "#f50", // Laranja
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    height: 14,
+    justifyContent: "center",
+    alignItems: "center",
+    transform: [{ translateY: -5 }], // Posicionar levemente acima
+  },
+  x10BadgeText: {
+    color: "white",
+    fontSize: 9,
+    fontWeight: "bold",
+    lineHeight: 14,
   },
 });
 
