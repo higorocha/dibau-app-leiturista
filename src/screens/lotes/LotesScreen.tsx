@@ -19,9 +19,9 @@ import api from "../../api/axiosConfig";
 import { useAuth } from "../../contexts/AuthContext";
 import ErrorMessage from "../../components/ErrorMessage";
 import { useTheme } from "@react-navigation/native";
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import Toast from 'react-native-toast-message';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import Toast from "react-native-toast-message";
 import CulturasModal from "../../components/lotes/CulturasModal";
 import { checkAndSyncCulturas } from "../../services/CulturasSyncService";
 // Importar os tipos do arquivo compartilhado
@@ -45,13 +45,17 @@ const LotesScreen: React.FC = () => {
   // Estado para modal de culturas
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedLote, setSelectedLote] = useState<Lote | null>(null);
-  const [selectedLoteCulturas, setSelectedLoteCulturas] = useState<LoteCultura[]>([]);
+  const [selectedLoteCulturas, setSelectedLoteCulturas] = useState<
+    LoteCultura[]
+  >([]);
 
   // Estados para busca e filtro
   const [searchText, setSearchText] = useState<string>("");
   const [filteredLotes, setFilteredLotes] = useState<Lote[]>([]);
   const [showFilters, setShowFilters] = useState(false);
-  const [filtroCultura, setFiltroCultura] = useState<"todos" | "comCulturas" | "semCulturas">("todos");
+  const [filtroCultura, setFiltroCultura] = useState<
+    "todos" | "comCulturas" | "semCulturas"
+  >("todos");
 
   // Estado para animação do painel de filtros
   const filterAnimation = useRef(new Animated.Value(0)).current;
@@ -95,7 +99,7 @@ const LotesScreen: React.FC = () => {
 
   const filterPanelHeight = filterAnimation.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 100]
+    outputRange: [0, 100],
   });
 
   // Carregar lotes pendentes de sincronização do AsyncStorage
@@ -123,52 +127,97 @@ const LotesScreen: React.FC = () => {
   }, []);
 
   // Função para carregar dados do AsyncStorage quando offline
+  // Função para carregar dados do AsyncStorage quando offline
   const carregarDadosOffline = async () => {
     try {
+      // Log para debug
+      console.log("[LOTES] Tentando carregar dados offline");
+
       const lotesData = await AsyncStorage.getItem("lotes_data");
       const culturasData = await AsyncStorage.getItem("culturas_data");
       const timestamp = await AsyncStorage.getItem("lotes_timestamp");
 
-      if (lotesData) {
-        const lotesParsed = JSON.parse(lotesData);
-
-        // Garantir que todos os lotes tenham os campos obrigatórios
-        const lotesCompletos = lotesParsed.map((lote: any) => ({
-          ...lote,
-          areaLote: lote.areaLote || 0,
-          sobraarea: lote.sobraarea || 0,
-          categoria: lote.categoria || "Colono",
-          situacao: lote.situacao || "Operacional",
-          isPendingSync: pendingLotes[lote.id] || false,
-        }));
-
-        setLotes(lotesCompletos);
-        setFilteredLotes(lotesCompletos);
-      } else {
-        setError("Nenhum dado de lotes disponível offline");
+      if (!lotesData) {
+        console.log("[LOTES] Nenhum dado disponível offline");
+        return false;
       }
+
+      const lotesParsed = JSON.parse(lotesData);
+
+      // Garantir que todos os lotes tenham os campos obrigatórios
+      const lotesCompletos = lotesParsed.map((lote: Lote) => ({
+        ...lote,
+        areaLote: lote.areaLote || 0,
+        sobraarea: lote.sobraarea || 0,
+        categoria: lote.categoria || "Colono",
+        situacao: lote.situacao || "Operacional",
+        isPendingSync: pendingLotes[lote.id] || false,
+      }));
+
+      // Atualizar estado com dados offline
+      setLotes(lotesCompletos);
+      setFilteredLotes(lotesCompletos);
 
       if (culturasData) {
         setCulturas(JSON.parse(culturasData));
       }
 
-      Toast.show({
-        type: "info",
-        text1: "Modo offline",
-        text2: timestamp
-          ? `Usando dados salvos em ${new Date(timestamp).toLocaleString()}`
-          : "Usando dados salvos localmente",
-        visibilityTime: 2000,
-      });
+      // Só mostrar toast se estiver offline para não incomodar
+      if (isOffline) {
+        Toast.show({
+          type: "info",
+          text1: "Modo offline",
+          text2: timestamp
+            ? `Usando dados salvos em ${new Date(timestamp).toLocaleString()}`
+            : "Usando dados salvos localmente",
+          visibilityTime: 2000,
+        });
+      }
+
+      return true;
     } catch (error) {
-      console.error("Erro ao carregar dados offline:", error);
-      setError("Falha ao carregar dados offline");
+      console.error("[LOTES] Erro ao carregar dados offline:", error);
+      return false;
+    }
+  };
+
+  const deveAtualizar = useCallback(async () => {
+    try {
+      const ultimaSincronizacao = await AsyncStorage.getItem(
+        "lotes_ultima_sincronizacao"
+      );
+
+      if (!ultimaSincronizacao) {
+        return true; // Nunca sincronizou antes
+      }
+
+      const ultimaData = new Date(ultimaSincronizacao).getTime();
+      const agora = new Date().getTime();
+      const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
+
+      // Verifica se passaram pelo menos 2 horas desde a última sincronização
+      return agora - ultimaData > duasHorasEmMS;
+    } catch (error) {
+      console.error("Erro ao verificar timestamp de sincronização:", error);
+      return true; // Em caso de erro, sincroniza por precaução
+    }
+  }, []);
+
+  // Função para salvar o timestamp da sincronização
+  const salvarTimestampSincronizacao = async () => {
+    try {
+      await AsyncStorage.setItem(
+        "lotes_ultima_sincronizacao",
+        new Date().toISOString()
+      );
+    } catch (error) {
+      console.error("Erro ao salvar timestamp de sincronização:", error);
     }
   };
 
   // Função para aplicar filtro e busca aos lotes
   const aplicarFiltro = useCallback(
-    (lotesArray: Lote[], termo: string, filtroCulturaAtual: "todos" | "comCulturas" | "semCulturas") => {
+    (lotesArray: Lote[], termo: string, filtroCulturaAtual: "todos" | "comCulturas" | "semCulturas"): Lote[] => {
       // Aplicar filtro de texto (busca)
       let resultado = termo
         ? lotesArray.filter(
@@ -177,7 +226,7 @@ const LotesScreen: React.FC = () => {
               (lote.Cliente?.nome && lote.Cliente.nome.toLowerCase().includes(termo.toLowerCase()))
           )
         : [...lotesArray];
-
+  
       // Aplicar filtro de culturas
       if (filtroCulturaAtual === "comCulturas") {
         resultado = resultado.filter(
@@ -188,83 +237,153 @@ const LotesScreen: React.FC = () => {
           (lote) => !lote.Culturas || lote.Culturas.length === 0
         );
       }
-
-      setFilteredLotes(resultado);
+  
+      return resultado;
     },
     []
   );
 
   // Efeito para atualizar a lista quando filtro ou busca mudam
   useEffect(() => {
-    aplicarFiltro(lotes, searchText, filtroCultura);
+    const filteredResults = aplicarFiltro(lotes, searchText, filtroCultura);
+    setFilteredLotes(filteredResults);
   }, [lotes, searchText, filtroCultura, aplicarFiltro]);
 
-  // Função principal para carregar lotes e culturas
-  const carregarDados = async () => {
+  const sincronizarEmBackground = async (forcarSincronizacao = false): Promise<void> => {
+    // Verificar se já está sincronizando para evitar requisições duplicadas
+    if (loading) {
+      console.log("[LOTES] Sincronização já em andamento");
+      return;
+    }
+    
     try {
-      setLoading(true);
-      setError("");
-
-      // Verificar se está offline
+      // Verificar se há conexão
       const netInfo = await NetInfo.fetch();
-      const isConnected = netInfo.isConnected;
-
-      if (isConnected) {
-        // MODO ONLINE: Buscar da API
-        try {
-          // Carregar lotes
-          const lotesResponse = await api.get("/lotesagricolas");
-
-          // Garantir que todos os lotes tenham valores para campos obrigatórios
-          const lotesCompletos = lotesResponse.data.map((lote: any) => ({
-            ...lote,
-            areaLote: lote.areaLote || 0,
-            sobraarea: lote.sobraarea || 0,
-            categoria: lote.categoria || "Colono",
-            situacao: lote.situacao || "Operacional",
-            // Marcar lotes com sincronização pendente
-            isPendingSync: pendingLotes[lote.id] || false,
-          }));
-
-          setLotes(lotesCompletos);
-          setFilteredLotes(lotesCompletos);
-
-          // Carregar culturas
-          const culturasResponse = await api.get("/culturas");
-          setCulturas(culturasResponse.data);
-
-          // Salvar dados para uso offline
-          await AsyncStorage.setItem(
-            "lotes_data",
-            JSON.stringify(lotesCompletos)
-          );
-          await AsyncStorage.setItem(
-            "culturas_data",
-            JSON.stringify(culturasResponse.data)
-          );
-          await AsyncStorage.setItem(
-            "lotes_timestamp",
-            new Date().toISOString()
-          );
-        } catch (error) {
-          console.error("Erro ao buscar dados da API:", error);
-
-          // Tentar carregar dados do AsyncStorage como fallback
-          await carregarDadosOffline();
-
-          Toast.show({
-            type: "error",
-            text1: "Erro ao carregar dados do servidor",
-            text2: "Usando dados offline como fallback",
-            visibilityTime: 3000,
-          });
+      if (!netInfo.isConnected) {
+        console.log("[LOTES] Sem conexão, não é possível sincronizar");
+        return;
+      }
+      
+      // Verificar se deve sincronizar
+      if (!forcarSincronizacao) {
+        const deveSinc = await deveAtualizar();
+        if (!deveSinc) {
+          console.log("[LOTES] Sincronização ignorada, última sincronização recente");
+          return;
         }
-      } else {
-        // MODO OFFLINE: Carregar dados do AsyncStorage
+      }
+      
+      // Indicador discreto de sincronização
+      Toast.show({
+        type: "info",
+        text1: "Sincronizando dados...",
+        text2: "Atualizando em segundo plano",
+        visibilityTime: 2000,
+      });
+      
+      // Buscar dados da API
+      const lotesResponse = await api.get("/lotesagricolas");
+      const culturasResponse = await api.get("/culturas");
+      
+      // Garantir que todos os lotes tenham valores para campos obrigatórios
+      const lotesCompletos = lotesResponse.data.map((lote: any) => ({
+        ...lote,
+        areaLote: lote.areaLote || 0,
+        sobraarea: lote.sobraarea || 0,
+        categoria: lote.categoria || "Colono",
+        situacao: lote.situacao || "Operacional",
+        // Marcar lotes com sincronização pendente
+        isPendingSync: pendingLotes[lote.id] || false,
+      }));
+      
+      // Salvar dados para uso offline
+      await AsyncStorage.setItem(
+        "lotes_data",
+        JSON.stringify(lotesCompletos)
+      );
+      await AsyncStorage.setItem(
+        "culturas_data",
+        JSON.stringify(culturasResponse.data)
+      );
+      await AsyncStorage.setItem(
+        "lotes_timestamp",
+        new Date().toISOString()
+      );
+      
+      // Atualizar estado - CORRIGIDO
+      setLotes(lotesCompletos);
+      // Aqui aplicamos o filtro e depois atualizamos o estado
+      const lotesFiltered = aplicarFiltro(lotesCompletos, searchText, filtroCultura);
+      setFilteredLotes(lotesFiltered);
+      
+      // Salvar timestamp da sincronização
+      await salvarTimestampSincronizacao();
+      
+      Toast.show({
+        type: "success",
+        text1: "Dados atualizados",
+        text2: "Sincronização completa",
+        visibilityTime: 2000,
+      });
+    } catch (error) {
+      console.error("[LOTES] Erro na sincronização em background:", error);
+      
+      // Se ocorrer erro, tentar carregar dados offline como fallback
+      if (lotes.length === 0) {
         await carregarDadosOffline();
       }
+    }
+  };
+
+  // Função principal para carregar lotes e culturas
+  const carregarDados = async (forcarSincronizacao = false) => {
+    console.log(`[LOTES] carregarDados - forçar: ${forcarSincronizacao}`);
+
+    try {
+      // Se for forçar sincronização ou não tiver dados, mostrar loading
+      if ((forcarSincronizacao || lotes.length === 0) && !refreshing) {
+        setLoading(true);
+      }
+
+      setError("");
+
+      // 1. Primeiro, tentar carregar dados offline
+      const dadosOfflineCarregados = await carregarDadosOffline();
+      console.log(
+        `[LOTES] Dados offline carregados: ${dadosOfflineCarregados}`
+      );
+
+      // 2. Verificar conexão
+      const isConnected = await NetInfo.fetch();
+      setIsOffline(!isConnected);
+
+      // 3. Se estiver online, iniciar sincronização em background
+      if (isConnected) {
+        // Se forçar sincronização ou não tiver dados offline, sincronizar imediatamente
+        if (forcarSincronizacao || !dadosOfflineCarregados) {
+          console.log("[LOTES] Iniciando sincronização imediata");
+          await sincronizarEmBackground(true);
+        } else {
+          // Verificar se deve sincronizar baseado no timestamp
+          const deveSinc = await deveAtualizar();
+          if (deveSinc) {
+            console.log("[LOTES] Iniciando sincronização em background");
+            // Timeout pequeno para não impactar carregamento inicial
+            setTimeout(() => sincronizarEmBackground(), 500);
+          } else {
+            console.log(
+              "[LOTES] Sincronização ignorada, última sincronização recente"
+            );
+          }
+        }
+      } else if (!dadosOfflineCarregados) {
+        // Se está offline e não tem dados, mostrar erro
+        setError(
+          "Você está offline e não há dados salvos. Conecte-se à internet e tente novamente."
+        );
+      }
     } catch (err) {
-      console.error("Erro ao carregar dados:", err);
+      console.error("[LOTES] Erro ao carregar dados:", err);
       setError("Falha ao carregar os dados. Verifique sua conexão.");
     } finally {
       setLoading(false);
@@ -274,7 +393,35 @@ const LotesScreen: React.FC = () => {
 
   // Carregar dados ao iniciar o componente
   useEffect(() => {
+    console.log("[LOTES] useEffect principal iniciado");
+
+    // Carregar dados iniciais
     carregarDados();
+
+    // Verificar conexão periodicamente e sincronizar alterações pendentes quando online
+    const intervalId = setInterval(async () => {
+      const netInfo = await NetInfo.fetch();
+      const novoStatus = !netInfo.isConnected;
+
+      // Se mudou de offline para online, verificar pendências
+      if (isOffline && !novoStatus) {
+        console.log("[LOTES] Dispositivo reconectado, verificando pendências");
+        // Verificar novamente se deve sincronizar
+        const deveSinc = await deveAtualizar();
+        if (deveSinc) {
+          sincronizarEmBackground();
+        }
+
+        // Tentar sincronizar culturas pendentes
+        checkAndSyncCulturas();
+      }
+
+      setIsOffline(novoStatus);
+    }, 10000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
   }, []);
 
   // Função para atualizar dados (pull-to-refresh)
@@ -331,20 +478,10 @@ const LotesScreen: React.FC = () => {
           <Text style={styles.filterBlockTitle}>Culturas</Text>
           <View style={styles.filterButtonsRow}>
             <TouchableOpacity
-              style={[
-                styles.filterChip,
-                filtroCultura === "todos" && styles.filterChipActive,
-              ]}
-              onPress={() => setFiltroCultura("todos")}
+              style={styles.reloadButton}
+              onPress={() => carregarDados(true)}
             >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  filtroCultura === "todos" && styles.filterChipTextActive,
-                ]}
-              >
-                Todos
-              </Text>
+              <Text style={styles.reloadButtonText}>Tentar novamente</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -357,7 +494,8 @@ const LotesScreen: React.FC = () => {
               <Text
                 style={[
                   styles.filterChipText,
-                  filtroCultura === "comCulturas" && styles.filterChipTextActive,
+                  filtroCultura === "comCulturas" &&
+                    styles.filterChipTextActive,
                 ]}
               >
                 Com Culturas
@@ -374,7 +512,8 @@ const LotesScreen: React.FC = () => {
               <Text
                 style={[
                   styles.filterChipText,
-                  filtroCultura === "semCulturas" && styles.filterChipTextActive,
+                  filtroCultura === "semCulturas" &&
+                    styles.filterChipTextActive,
                 ]}
               >
                 Sem Culturas
@@ -595,7 +734,12 @@ const LotesScreen: React.FC = () => {
       {/* Campo de busca com botão de filtro */}
       <View style={styles.searchContainer}>
         <View style={styles.searchBox}>
-          <Ionicons name="search" size={22} color="#666" style={styles.searchIcon} />
+          <Ionicons
+            name="search"
+            size={22}
+            color="#666"
+            style={styles.searchIcon}
+          />
           <TextInput
             style={styles.searchInput}
             placeholder="Buscar por lote ou irrigante..."
@@ -609,22 +753,22 @@ const LotesScreen: React.FC = () => {
             </TouchableOpacity>
           )}
         </View>
-        
-        <TouchableOpacity 
+
+        <TouchableOpacity
           style={[
             styles.filterButton,
-            showFilters && styles.filterButtonActive
-          ]} 
+            showFilters && styles.filterButtonActive,
+          ]}
           onPress={() => setShowFilters(!showFilters)}
         >
-          <Ionicons 
-            name={showFilters ? "options" : "options-outline"} 
-            size={22} 
-            color={showFilters ? "#fff" : "#2a9d8f"} 
+          <Ionicons
+            name={showFilters ? "options" : "options-outline"}
+            size={22}
+            color={showFilters ? "#fff" : "#2a9d8f"}
           />
         </TouchableOpacity>
       </View>
-      
+
       {/* Painel de filtros expansível */}
       {renderFilterPanel()}
 
@@ -655,7 +799,7 @@ const LotesScreen: React.FC = () => {
               </Text>
               <TouchableOpacity
                 style={styles.reloadButton}
-                onPress={carregarDados}
+                onPress={() => carregarDados(true)}
               >
                 <Text style={styles.reloadButtonText}>Tentar novamente</Text>
               </TouchableOpacity>
@@ -683,15 +827,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f5f5",
   },
   offlineBar: {
-    backgroundColor: '#ff6b6b',
+    backgroundColor: "#ff6b6b",
     padding: 8,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
   },
   offlineText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    color: "#fff",
+    fontWeight: "bold",
     marginLeft: 8,
   },
   // Estilo para cards pendentes de sincronização
