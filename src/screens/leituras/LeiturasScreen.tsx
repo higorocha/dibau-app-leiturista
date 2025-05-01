@@ -22,6 +22,7 @@ import { useTheme } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import Toast from "react-native-toast-message";
+import ImagemLeituraService from "@/src/services/ImagemLeituraService";
 
 // Interface para o objeto de leitura mensal
 interface Fatura {
@@ -108,32 +109,61 @@ const LeiturasScreen: React.FC = () => {
     }
   };
 
+  const limparImagensFaturasFechadas = async (leituras: LeituraMensal[]) => {
+    try {
+      let totalRemovidas = 0;
+      
+      // Verificar cada mês de leituras
+      for (const leitura of leituras) {
+        if (leitura.isAllFechada) {
+          const removidas = await ImagemLeituraService.limparImagensFaturasFechadas(
+            leitura.mesAno, 
+            leitura.isAllFechada, 
+            leitura.faturas
+          );
+          
+          totalRemovidas += removidas;
+        }
+      }
+      
+      if (totalRemovidas > 0) {
+        console.log(`[LEITURAS] ${totalRemovidas} imagens de leituras removidas do armazenamento local`);
+      }
+    } catch (error) {
+      console.error('[LEITURAS] Erro ao limpar imagens locais:', error);
+    }
+  };
+
   // Função para verificar se deve sincronizar baseado no timestamp
   const deveAtualizar = useCallback(async () => {
     try {
       // Verificar timestamp da última sincronização
-      const ultimaSincronizacao = await AsyncStorage.getItem(
-         "leituras_ultima_sincronizacao"
-      );
-  
+      const ultimaSincronizacao = await AsyncStorage.getItem("leituras_ultima_sincronizacao");
+      
       if (!ultimaSincronizacao) {
         console.log("[DEBUG] Nenhuma sincronização anterior encontrada, deve sincronizar");
         return true; // Nunca sincronizou antes
       }
-  
+      
+      // Garantir que estamos lidando com timestamps UTC
       const ultimaData = new Date(ultimaSincronizacao).getTime();
       const agora = new Date().getTime();
       const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
-  
+      const diferenca = agora - ultimaData;
+      
       // Verifica se passaram pelo menos 2 horas desde a última sincronização
-      const deveSincronizar = agora - ultimaData > duasHorasEmMS;
+      const deveSincronizar = diferenca > duasHorasEmMS;
+      
+      // Logs detalhados para debugging
+      console.log(`[DEBUG] Timestamp da última sincronização: ${ultimaSincronizacao}`);
       console.log(`[DEBUG] Última sincronização: ${new Date(ultimaData).toLocaleString()}`);
-      console.log(`[DEBUG] Tempo decorrido: ${Math.floor((agora - ultimaData) / 60000)} minutos`);
-      console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
+      console.log(`[DEBUG] Horário atual: ${new Date(agora).toLocaleString()}`);
+      console.log(`[DEBUG] Diferença em minutos: ${Math.floor(diferenca / 60000)}`);
+      console.log(`[DEBUG] Deve sincronizar (passou 2h): ${deveSincronizar}`);
       
       return deveSincronizar;
     } catch (error) {
-      console.error("Erro ao verificar timestamp de sincronização:", error);
+      console.error("[DEBUG] Erro ao verificar timestamp de sincronização:", error);
       return true; // Em caso de erro, sincroniza por precaução
     }
   }, []);
@@ -141,12 +171,11 @@ const LeiturasScreen: React.FC = () => {
   // Função para salvar o timestamp da sincronização
   const salvarTimestampSincronizacao = async () => {
     try {
-      await AsyncStorage.setItem(
-        "leituras_ultima_sincronizacao",
-        new Date().toISOString()
-      );
+      const timestamp = new Date().toISOString();
+      console.log(`[DEBUG] Salvando timestamp de sincronização: ${timestamp}`);
+      await AsyncStorage.setItem("leituras_ultima_sincronizacao", timestamp);
     } catch (error) {
-      console.error("Erro ao salvar timestamp de sincronização:", error);
+      console.error("[DEBUG] Erro ao salvar timestamp de sincronização:", error);
     }
   };
 
@@ -274,6 +303,7 @@ const LeiturasScreen: React.FC = () => {
             setLeituras(leiturasMensais);
             setLastSyncTime(timestamp);
             setHasMore(false);
+            limparImagensFaturasFechadas(leiturasMensais);
           }
         } else {
           console.log("[DEBUG] Resposta sem dados válidos");
@@ -434,8 +464,10 @@ const LeiturasScreen: React.FC = () => {
         // ou se já passou o tempo mínimo desde a última sincronização
         if (forcarSincronizacao) {
           deveSincronizar = true;
+          console.log("[DEBUG] Sincronização forçada pelo usuário");
         } else {
           deveSincronizar = await deveAtualizar();
+          console.log(`[DEBUG] Sincronização automática: ${deveSincronizar ? "necessária" : "não necessária"}`);
         }
         console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
       }
@@ -500,11 +532,26 @@ const LeiturasScreen: React.FC = () => {
           await AsyncStorage.setItem('leituras_migracao_realizada', 'true');
         }
   
-        // Forçar sincronização na primeira execução
-        console.log("[DEBUG] Forçando sincronização inicial");
-        await carregarLeituras(true); // Forçar sincronização
+        // Importante: carregar dados locais primeiro
+        await carregarDadosLocais();
+        
+        // Verificar se deve sincronizar baseado no timestamp
+        const deveSincronizar = await deveAtualizar();
+        console.log(`[DEBUG] Deve sincronizar na inicialização: ${deveSincronizar}`);
+        
+        // Só sincronizar se necessário (primeira vez ou após 2h)
+        if (deveSincronizar) {
+          console.log("[DEBUG] Iniciando sincronização inicial");
+          await carregarLeituras(true); // Forçar sincronização
+        } else {
+          console.log("[DEBUG] Usando dados em cache (menos de 2h desde última sincronização)");
+          // Garantir que loading e refreshing estejam desativados
+          setLoading(false);
+          setRefreshing(false);
+        }
       } catch (error) {
         console.error('[DEBUG] Erro ao inicializar:', error);
+        setLoading(false);
       }
     };
     

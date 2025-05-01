@@ -1,6 +1,12 @@
+// src/services/ImagemLeituraService.ts - Versão completa
+
 import api from '../api/axiosConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import * as Permissions from 'expo-permissions';
 import axios from 'axios';
+import { Platform } from 'react-native';
 
 interface ImageLeituraStatus {
   [key: number]: boolean;
@@ -10,6 +16,29 @@ interface ImageLeituraStatus {
  * Serviço para gerenciar as imagens de leituras
  */
 class ImagemLeituraService {
+  // Diretório para salvar imagens localmente
+  private imageDirectory = `${FileSystem.documentDirectory}imagens_leituras/`;
+  
+  constructor() {
+    // Garantir que o diretório existe
+    this.initializeDirectory();
+  }
+  
+  /**
+   * Inicializa o diretório de imagens
+   */
+  private async initializeDirectory() {
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(this.imageDirectory);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(this.imageDirectory, { intermediates: true });
+        console.log("[IMAGENS] Diretório de imagens criado");
+      }
+    } catch (error) {
+      console.error("[IMAGENS] Erro ao inicializar diretório:", error);
+    }
+  }
+  
   /**
    * Verifica quais faturas já possuem imagens de leitura
    * @param faturas Array de faturas para verificar
@@ -30,9 +59,20 @@ class ImagemLeituraService {
       const faturasParaVerificar = faturas.slice(0, 20);
       
       for (const fatura of faturasParaVerificar) {
-        // Verificar se tem imagem_leitura diretamente no objeto Leitura
-        if (fatura.Leitura && typeof fatura.Leitura.imagem_leitura === 'string' && fatura.Leitura.imagem_leitura.length > 0) {
-          imagensStatus[fatura.id] = true;
+        if (fatura.Leitura && fatura.Leitura.id) {
+          // Verificar primeiro localmente
+          const existeLocalmente = await this.verificarImagemLocal(fatura.Leitura.id);
+          
+          if (existeLocalmente) {
+            imagensStatus[fatura.id] = true;
+            continue;
+          }
+          
+          // Se não tem localmente, verificar se tem imagem_leitura diretamente no objeto Leitura
+          if (fatura.Leitura && typeof fatura.Leitura.imagem_leitura === 'string' && 
+              fatura.Leitura.imagem_leitura.length > 0) {
+            imagensStatus[fatura.id] = true;
+          }
         }
       }
       
@@ -46,13 +86,93 @@ class ImagemLeituraService {
   }
   
   /**
+   * Verifica se existe uma imagem local para uma leitura
+   * @param leituraId ID da leitura
+   * @returns Boolean indicando se existe imagem local
+   */
+  async verificarImagemLocal(leituraId: number): Promise<boolean> {
+    try {
+      const imagePath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      const fileInfo = await FileSystem.getInfoAsync(imagePath);
+      return fileInfo.exists;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao verificar imagem local:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Salva uma imagem localmente
+   * @param leituraId ID da leitura
+   * @param imageUri URI da imagem temporária
+   * @returns Caminho da imagem salva ou null em caso de erro
+   */
+  async salvarImagemLocal(leituraId: number, imageUri: string): Promise<string | null> {
+    try {
+      // Verificar permissões se for Android (iOS não precisa para documentDirectory)
+      if (Platform.OS === 'android') {
+        const { status } = await Permissions.askAsync(Permissions.MEDIA_LIBRARY);
+        if (status !== 'granted') {
+          console.log('[IMAGENS] Permissão de armazenamento negada');
+          return null;
+        }
+      }
+      
+      // Garantir que o diretório existe
+      await this.initializeDirectory();
+      
+      // Definir caminho de destino
+      const destPath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      
+      // Copiar o arquivo temporário para o diretório permanente
+      await FileSystem.copyAsync({
+        from: imageUri,
+        to: destPath
+      });
+      
+      console.log(`[IMAGENS] Imagem salva localmente em: ${destPath}`);
+      return destPath;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao salvar imagem local:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Obtém o caminho da imagem local de uma leitura
+   * @param leituraId ID da leitura
+   * @returns Caminho da imagem ou null se não existir
+   */
+  async obterCaminhoImagemLocal(leituraId: number): Promise<string | null> {
+    try {
+      const imagePath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      const fileInfo = await FileSystem.getInfoAsync(imagePath);
+      
+      if (fileInfo.exists) {
+        return imagePath;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao obter caminho da imagem:', error);
+      return null;
+    }
+  }
+  
+  /**
    * Método otimizado para verificar se uma leitura tem imagem sem fazer requisição
    * @param leituraId ID da leitura a verificar
    * @returns Boolean indicando se existe ou não imagem associada
    */
   async leituraTemImagem(leituraId: number): Promise<boolean> {
     try {
-      // 1. Verificar cache local primeiro
+      // 1. Verificar localmente primeiro
+      const temLocalmente = await this.verificarImagemLocal(leituraId);
+      if (temLocalmente) {
+        return true;
+      }
+      
+      // 2. Verificar cache local primeiro
       const cacheKey = `imagem_status_${leituraId}`;
       const cachedStatus = await AsyncStorage.getItem(cacheKey);
       
@@ -67,7 +187,7 @@ class ImagemLeituraService {
         }
       }
       
-      // 2. Verificar nos meses carregados
+      // 3. Verificar nos meses carregados
       const mesesIndexStr = await AsyncStorage.getItem('leituras_meses_index');
       if (mesesIndexStr) {
         const mesesIndex = JSON.parse(mesesIndexStr);
@@ -87,7 +207,7 @@ class ImagemLeituraService {
                   // Encontrou a leitura, salvar no cache e retornar
                   const temImagem = !!fatura.Leitura.imagem_leitura;
                   await AsyncStorage.setItem(cacheKey, 
-                                            JSON.stringify({tem: temImagem, timestamp: Date.now()}));
+                                           JSON.stringify({tem: temImagem, timestamp: Date.now()}));
                   return temImagem;
                 }
               }
@@ -98,7 +218,7 @@ class ImagemLeituraService {
         }
       }
       
-      // 3. Se não encontrou, assume que não tem
+      // 4. Se não encontrou, assume que não tem
       await AsyncStorage.setItem(cacheKey, 
                                 JSON.stringify({tem: false, timestamp: Date.now()}));
       return false;
@@ -156,6 +276,49 @@ class ImagemLeituraService {
   }
   
   /**
+   * Baixa uma imagem do servidor e salva localmente
+   * @param leituraId ID da leitura
+   * @param forceDownload Forçar download mesmo se já existir localmente
+   * @returns Caminho da imagem local ou null em caso de erro
+   */
+  async baixarImagem(leituraId: number, forceDownload = false): Promise<string | null> {
+    try {
+      // Verificar se já temos a imagem localmente
+      if (!forceDownload) {
+        const caminhoLocal = await this.obterCaminhoImagemLocal(leituraId);
+        if (caminhoLocal) {
+          return caminhoLocal;
+        }
+      }
+      
+      // Buscar a URL da imagem no servidor
+      const imageUrl = await this.obterUrlImagem(leituraId);
+      if (!imageUrl) {
+        return null;
+      }
+      
+      // Definir o caminho de destino
+      const destPath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      
+      // Fazer o download da imagem
+      const downloadResult = await FileSystem.downloadAsync(
+        imageUrl,
+        destPath
+      );
+      
+      if (downloadResult.status === 200) {
+        console.log(`[IMAGENS] Imagem baixada e salva em: ${destPath}`);
+        return destPath;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao baixar imagem:', error);
+      return null;
+    }
+  }
+  
+  /**
    * Atualiza cache do status de imagem para uma leitura
    */
   private async atualizarCacheImagem(leituraId: number, temImagem: boolean): Promise<void> {
@@ -181,10 +344,72 @@ class ImagemLeituraService {
       await AsyncStorage.removeItem(`imagem_status_${leituraId}`);
       await AsyncStorage.removeItem(`imagem_url_${leituraId}`);
       
+      // Excluir a versão local, se existir
+      await this.excluirImagemLocal(leituraId);
+      
       return true;
     } catch (error) {
       console.error('Erro ao excluir imagem:', error);
       return false;
+    }
+  }
+  
+  /**
+   * Exclui apenas a imagem local de uma leitura
+   * @param leituraId ID da leitura
+   * @returns Se a exclusão foi bem-sucedida
+   */
+  async excluirImagemLocal(leituraId: number): Promise<boolean> {
+    try {
+      const imagePath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      const fileInfo = await FileSystem.getInfoAsync(imagePath);
+      
+      if (fileInfo.exists) {
+        await FileSystem.deleteAsync(imagePath);
+        console.log(`[IMAGENS] Imagem local excluída: ${imagePath}`);
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao excluir imagem local:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Limpa imagens locais de faturas fechadas
+   * @param mesAno String no formato "MM/YYYY"
+   * @param isAllFechada Flag indicando se todas as faturas do mês estão fechadas
+   * @param faturas Lista de faturas para verificar IDs de leitura
+   * @returns Número de imagens removidas
+   */
+  async limparImagensFaturasFechadas(mesAno: string, isAllFechada: boolean, faturas: any[]): Promise<number> {
+    if (!isAllFechada) {
+      return 0; // Só limpa se todas as faturas estiverem fechadas
+    }
+    
+    try {
+      let imagensRemovidas = 0;
+      
+      // Remover imagens das faturas fechadas
+      for (const fatura of faturas) {
+        if (fatura.Leitura && fatura.Leitura.id) {
+          const removido = await this.excluirImagemLocal(fatura.Leitura.id);
+          if (removido) {
+            imagensRemovidas++;
+          }
+        }
+      }
+      
+      if (imagensRemovidas > 0) {
+        console.log(`[IMAGENS] ${imagensRemovidas} imagens removidas para faturas fechadas de ${mesAno}`);
+      }
+      
+      return imagensRemovidas;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao limpar imagens de faturas fechadas:', error);
+      return 0;
     }
   }
 }
