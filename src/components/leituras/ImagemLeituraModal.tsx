@@ -21,6 +21,7 @@ import ImagePreviewModal from "./ImagePreviewModal";
 import CameraPermissionRequestModal from "./CameraPermissionRequestModal";
 import ImagePreviewView from "./ImagePreviewView";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
+import * as FileSystem from 'expo-file-system';
 
 interface ImagemLeituraModalProps {
   isVisible: boolean;
@@ -259,62 +260,98 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
 
   // Função visualizarImagemExistente modificada
   const visualizarImagemExistente = async () => {
-    if (!capturedImage || !leituraId || !faturaId) {
-        return;
-      }
-      
-      setUploading(true);
-
+    if (!leituraId || !faturaId) {
+      console.log("[IMAGENS] Erro: leituraId ou faturaId não definidos");
+      return;
+    }
+  
     try {
-        console.log(`[IMAGENS] Iniciando upload de imagem para leitura ${leituraId}`);
-    
-        // 1. Salvar a imagem localmente primeiro
-        console.log(`[IMAGENS] Tentando salvar localmente...`);
-        const caminhoLocal = await ImagemLeituraService.salvarImagemLocal(leituraId, capturedImage);
+      console.log(`[IMAGENS] Iniciando visualização da imagem para leitura ID: ${leituraId}`);
+      setUploading(true); // Mostrar indicador de carregamento
+  
+      // 1. Verificar se a imagem existe localmente
+      let caminhoLocal = await ImagemLeituraService.obterCaminhoImagemLocal(leituraId);
+      console.log(`[IMAGENS] Caminho local: ${caminhoLocal || 'não encontrado'}`);
+  
+      // 2. Se não existir localmente, tentar baixar do servidor
+      if (!caminhoLocal) {
+        const netInfo = await NetInfo.fetch();
         
-        if (!caminhoLocal) {
-          console.error('[IMAGENS] Falha ao salvar imagem localmente');
+        if (netInfo.isConnected) {
+          console.log('[IMAGENS] Não encontrado localmente, tentando baixar do servidor...');
           Toast.show({
-            type: 'error',
-            text1: 'Erro ao salvar imagem',
-            text2: 'Não foi possível salvar a imagem no dispositivo',
+            type: 'info',
+            text1: 'Baixando imagem...',
+            text2: 'Aguarde enquanto baixamos a imagem do servidor',
             position: 'bottom',
-            visibilityTime: 3000,
+            visibilityTime: 2000,
           });
+          
+          // Tentar baixar a imagem
+          caminhoLocal = await ImagemLeituraService.baixarImagem(leituraId);
+          console.log(`[IMAGENS] Download concluído, caminho: ${caminhoLocal || 'falha no download'}`);
+        } else {
+          console.log('[IMAGENS] Sem conexão e imagem não disponível localmente');
+          Alert.alert(
+            "Sem conexão",
+            "Você está offline e a imagem não está disponível no dispositivo."
+          );
           setUploading(false);
           return;
         }
-
+      }
+  
       // 3. Se conseguimos obter a imagem, exibir
       if (caminhoLocal) {
-        // Implementar visualização direta usando um modal
-        setShowImagePreview(true);
-        setImagePreviewUri(caminhoLocal);
+        console.log(`[IMAGENS] Preparando para exibir imagem de: ${caminhoLocal}`);
+        
+        // Verificar se o arquivo realmente existe
+        const fileInfo = await FileSystem.getInfoAsync(caminhoLocal);
+        if (!fileInfo.exists) {
+          console.log(`[IMAGENS] ERRO: Arquivo não existe apesar do caminho ser válido`);
+          Alert.alert("Erro", "Arquivo de imagem não encontrado no dispositivo.");
+          setUploading(false);
+          return;
+        }
+        
+        console.log(`[IMAGENS] Arquivo existe, tamanho: ${fileInfo.size} bytes`);
+        
+        // Importante: Fechar qualquer modal que esteja aberto antes de mostrar o preview
+        setShowConfirmOverwrite(false);
+        
+        // Pequeno timeout para garantir que o primeiro modal foi fechado
+        setTimeout(() => {
+          setImagePreviewUri(caminhoLocal);
+          setShowImagePreview(true);
+          console.log('[IMAGENS] Estados atualizados: showImagePreview=true, uri definido');
+          setUploading(false);
+        }, 300);
       } else {
-        // Se não conseguimos obter localmente nem baixar
+        console.log('[IMAGENS] Não foi possível obter a imagem de nenhuma fonte');
         Alert.alert(
           "Erro",
           "Não foi possível carregar a imagem. Tente novamente mais tarde."
         );
-      }
-    } catch (error) {
-        console.error('[IMAGENS] Erro ao processar imagem:', error);
-        // Log mais detalhado para diagnóstico
-        if (error instanceof Error) {
-          console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
-        }
-        
-        Toast.show({
-          type: 'error',
-          text1: 'Erro ao processar imagem',
-          text2: 'Ocorreu um erro inesperado. Tente novamente.',
-          position: 'bottom',
-          visibilityTime: 3000,
-        });
-      } finally {
         setUploading(false);
       }
-    };
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao visualizar imagem:', error);
+      // Log mais detalhado para diagnóstico
+      if (error instanceof Error) {
+        console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
+      }
+      
+      Toast.show({
+        type: 'error',
+        text1: 'Erro ao carregar imagem',
+        text2: 'Ocorreu um erro inesperado. Tente novamente.',
+        position: 'bottom',
+        visibilityTime: 3000,
+      });
+      
+      setUploading(false);
+    }
+  };
 
   const handleConfirmOverwrite = () => {
     setShowConfirmOverwrite(false);

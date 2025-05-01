@@ -1,5 +1,5 @@
-// src/components/leituras/ImagePreviewView.tsx
-import React from 'react';
+// src/components/leituras/ImagePreviewView.tsx - Componente melhorado
+import React, { useEffect } from 'react';
 import { 
   Modal, 
   View, 
@@ -9,9 +9,11 @@ import {
   Text,
   SafeAreaView,
   StatusBar,
-  Dimensions
+  Dimensions,
+  Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
 
 interface ImagePreviewViewProps {
   isVisible: boolean;
@@ -26,8 +28,32 @@ const ImagePreviewView: React.FC<ImagePreviewViewProps> = ({
   imageUri,
   onClose
 }) => {
-  if (!imageUri) return null;
-  
+  // Verificar o arquivo de imagem quando o componente for montado
+  useEffect(() => {
+    if (isVisible && imageUri) {
+      console.log(`[IMAGENS] ImagePreviewView aberto com URI: ${imageUri}`);
+      
+      // Verificar se o arquivo existe
+      FileSystem.getInfoAsync(imageUri)
+        .then(fileInfo => {
+          console.log(`[IMAGENS] Verificação do arquivo: existe=${fileInfo.exists}, ${fileInfo.exists ? `tamanho=${fileInfo.size} bytes` : 'não existe'}`);
+          
+          if (!fileInfo.exists) {
+            Alert.alert("Erro", "O arquivo de imagem não foi encontrado.", [
+              { text: "OK", onPress: onClose }
+            ]);
+          }
+        })
+        .catch(error => {
+          console.error("[IMAGENS] Erro ao verificar arquivo:", error);
+        });
+    }
+  }, [isVisible, imageUri]);
+
+  if (!isVisible || !imageUri) {
+    return null;
+  }
+
   return (
     <Modal
       visible={isVisible}
@@ -52,6 +78,13 @@ const ImagePreviewView: React.FC<ImagePreviewViewProps> = ({
             source={{ uri: imageUri }}
             style={styles.image}
             resizeMode="contain"
+            onLoad={() => console.log('[IMAGENS] Imagem carregada com sucesso')}
+            onError={(e) => {
+              console.error('[IMAGENS] Erro ao carregar imagem:', e.nativeEvent.error);
+              Alert.alert("Erro", "Não foi possível carregar a imagem.", [
+                { text: "OK", onPress: onClose }
+              ]);
+            }}
           />
         </View>
         

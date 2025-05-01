@@ -178,12 +178,17 @@ class ImagemLeituraService {
   async obterCaminhoImagemLocal(leituraId: number): Promise<string | null> {
     try {
       const imagePath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      console.log(`[IMAGENS] Verificando existência da imagem em: ${imagePath}`);
+      
       const fileInfo = await FileSystem.getInfoAsync(imagePath);
       
       if (fileInfo.exists) {
-        return imagePath;
+        console.log(`[IMAGENS] Imagem encontrada: ${imagePath}, tamanho: ${fileInfo.size} bytes`);
+        // Importante: usar o URI retornado pelo FileSystem, que pode ser diferente em alguns dispositivos
+        return fileInfo.uri;
       }
       
+      console.log(`[IMAGENS] Imagem não encontrada localmente para leitura ${leituraId}`);
       return null;
     } catch (error) {
       console.error('[IMAGENS] Erro ao obter caminho da imagem:', error);
@@ -319,18 +324,27 @@ class ImagemLeituraService {
       if (!forceDownload) {
         const caminhoLocal = await this.obterCaminhoImagemLocal(leituraId);
         if (caminhoLocal) {
+          console.log(`[IMAGENS] Imagem já existe localmente em: ${caminhoLocal}`);
           return caminhoLocal;
         }
       }
       
+      console.log(`[IMAGENS] Buscando URL da imagem no servidor para leitura: ${leituraId}`);
+      
       // Buscar a URL da imagem no servidor
       const imageUrl = await this.obterUrlImagem(leituraId);
       if (!imageUrl) {
+        console.log(`[IMAGENS] URL da imagem não encontrada para leitura: ${leituraId}`);
         return null;
       }
       
+      console.log(`[IMAGENS] URL obtida: ${imageUrl}, iniciando download...`);
+      
       // Definir o caminho de destino
       const destPath = `${this.imageDirectory}leitura_${leituraId}.jpg`;
+      
+      // Garantir que o diretório existe
+      await this.initializeDirectory();
       
       // Fazer o download da imagem
       const downloadResult = await FileSystem.downloadAsync(
@@ -339,13 +353,17 @@ class ImagemLeituraService {
       );
       
       if (downloadResult.status === 200) {
-        console.log(`[IMAGENS] Imagem baixada e salva em: ${destPath}`);
+        console.log(`[IMAGENS] Download concluído com sucesso: ${destPath}`);
         return destPath;
+      } else {
+        console.log(`[IMAGENS] Download falhou, status: ${downloadResult.status}`);
+        return null;
       }
-      
-      return null;
     } catch (error) {
       console.error('[IMAGENS] Erro ao baixar imagem:', error);
+      if (error instanceof Error) {
+        console.error('[IMAGENS] Erro detalhado:', error.name, error.message, error.stack);
+      }
       return null;
     }
   }
