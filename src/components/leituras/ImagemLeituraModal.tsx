@@ -23,6 +23,7 @@ import ImagePreviewView from "./ImagePreviewView";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
 import * as FileSystem from "expo-file-system";
 
+
 interface ImagemLeituraModalProps {
   isVisible: boolean;
   onClose: () => void;

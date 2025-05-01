@@ -224,12 +224,6 @@ const FaturaItem = memo<FaturaItemProps>(
                       marginTop: 4,
                     }}
                   >
-                    <View style={styles.x10Badge}>
-                      <Text style={styles.x10BadgeText}>x10</Text>
-                    </View>
-                    <Text style={[styles.multiplicadorText, { marginLeft: 4 }]}>
-                      Valor será multiplicado por 10
-                    </Text>
                   </View>
                 )}
               </View>
