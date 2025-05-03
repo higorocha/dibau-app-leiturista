@@ -3,11 +3,16 @@
     "name": "DIBAU - App de Leituras",
     "slug": "SistemaIrrigacaoApp",
     "version": "1.0.0",
+    "runtimeVersion": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "updates": {
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_ERROR_RECOVERY"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sistemairrigacao.app",

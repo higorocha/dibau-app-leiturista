@@ -18,6 +18,7 @@ import { checkAndSync } from "@/src/services/SyncService";
 import NetInfo from '@react-native-community/netinfo';
 import { checkAndSyncCulturas } from "@/src/services/CulturasSyncService";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import UpdateHandler from "@/src/components/UpdateHandler"; // Adicione esta linha
 
 
 const toastConfig: ToastConfig = {
@@ -70,7 +71,6 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  // escolhe o tema claro ou escuro customizado
   const navTheme =
     colorScheme === "dark" ? DarkNavigationThemeCustom : LightNavigationTheme;
   const [loaded] = useFonts({
@@ -183,6 +183,7 @@ export default function RootLayout() {
           <Slot />
           <StatusBar style="auto" />
           <Toast config={toastConfig} />
+          <UpdateHandler />
         </ThemeProvider>
       </LeiturasProvider>
     </AuthProvider>
