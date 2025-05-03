@@ -124,6 +124,10 @@ const FaturaItem = memo<FaturaItemProps>(
     faturasComImagem,
     handleOpenImagemModal,
   }) => {
+    if (index === 0) {
+      console.log("Data atual do item:", item.Leitura?.data_leitura);
+      console.log("Data em dataLeituraAtuais:", dataLeituraAtuais[item.id]);
+    }
     const isEditing = editingId === item.id;
     const isSaving = salvando[item.id] || false;
     const isDisabled = item.fechada === "Sim";
@@ -173,7 +177,13 @@ const FaturaItem = memo<FaturaItemProps>(
               <Ionicons name="analytics-outline" size={16} color="#666" />
               <Text style={[styles.infoText, isTablet && { fontSize: 14 }]}>
                 Leitura Anterior:{" "}
-                {formatarNumeroComMilhar(item.leitura_anterior || 0)} m³
+                {formatarNumeroComMilhar(
+                  // Se for x10 e não tiver leitura atual informada, divide por 10
+                  item.Hidrometro.x10 && !item.Leitura?.leitura
+                    ? (item.leitura_anterior || 0) / 10
+                    : item.leitura_anterior || 0
+                )}{" "}
+                m³
                 {item.data_leitura_anterior ? (
                   <Text style={[styles.infoText, isTablet && { fontSize: 14 }]}>
                     {" em "}
@@ -223,8 +233,7 @@ const FaturaItem = memo<FaturaItemProps>(
                       alignItems: "center",
                       marginTop: 4,
                     }}
-                  >
-                  </View>
+                  ></View>
                 )}
               </View>
             ) : (
@@ -282,7 +291,11 @@ const FaturaItem = memo<FaturaItemProps>(
               </View>
             ) : (
               <Text style={[styles.readingValue, isTablet && { fontSize: 15 }]}>
-                {item.Leitura ? formatarData(item.Leitura.data_leitura) : "-"}
+                {dataLeituraAtuais[item.id]
+                  ? formatarData(dataLeituraAtuais[item.id])
+                  : item.Leitura && item.Leitura.data_leitura
+                  ? formatarData(item.Leitura.data_leitura)
+                  : "-"}
               </Text>
             )}
           </View>
@@ -544,10 +557,16 @@ const LeiturasDetalhesScreen: React.FC = () => {
         ? fatura.Leitura.leitura.toString()
         : "";
 
-      datas[fatura.id] =
-        fatura.Leitura?.leitura > 0
-          ? new Date(fatura.Leitura.data_leitura)
-          : new Date(); // Data atual se não houver leitura válida
+      // Preservar as datas replicadas
+      if (fatura.Leitura?.leitura && fatura.Leitura?.leitura > 0) {
+        datas[fatura.id] = new Date(fatura.Leitura.data_leitura + "T00:00:00");
+      } else if (dataLeituraAtuais[fatura.id]) {
+        // Se já tem uma data setada (replicada), mantém essa data
+        datas[fatura.id] = dataLeituraAtuais[fatura.id];
+      } else {
+        // Caso contrário, usa a data atual
+        datas[fatura.id] = new Date();
+      }
 
       // Verificar se a leitura tem valor atual (foi editada)
       editados[fatura.id] =
@@ -556,7 +575,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
     });
 
     setLeituraAtuais(leituras);
-    setDataLeituraAtuais(datas);
+    setDataLeituraAtuais((prev) => ({ ...prev, ...datas })); // Mescla com as datas anteriores
     setLeiturasSalvas(editados);
     aplicarFiltroEOrdenacao(
       faturasSelecionadas,
@@ -694,13 +713,28 @@ const LeiturasDetalhesScreen: React.FC = () => {
         ...prev,
         [faturaId]: fatura.Leitura?.leitura.toString() || "",
       }));
-    }
-    // Se for uma nova leitura (sem leitura anterior), atualizar a data para hoje
-    if (!fatura.Leitura?.leitura) {
-      setDataLeituraAtuais((prev) => ({
-        ...prev,
-        [faturaId]: new Date(),
-      }));
+
+      // Sempre atualizar a data apenas para a fatura que está sendo editada
+      setDataLeituraAtuais((prev) => {
+        const novasDatas = { ...prev };
+
+        // Se a fatura tem leitura, usa a data da leitura
+        if (fatura.Leitura?.leitura && fatura.Leitura?.leitura > 0) {
+          novasDatas[faturaId] = new Date(
+            fatura.Leitura.data_leitura + "T00:00:00"
+          );
+        }
+        // Se não tem leitura, mas já tem uma data setada (replicada), mantém essa data
+        else if (prev[faturaId]) {
+          novasDatas[faturaId] = prev[faturaId];
+        }
+        // Caso contrário, usa a data atual
+        else {
+          novasDatas[faturaId] = new Date();
+        }
+
+        return novasDatas;
+      });
     }
   };
 
@@ -733,10 +767,30 @@ const LeiturasDetalhesScreen: React.FC = () => {
     }));
 
     if (selectedDate) {
-      setDataLeituraAtuais((prev) => ({
-        ...prev,
-        [faturaId]: selectedDate,
-      }));
+      const faturaEditando = faturasSelecionadas.find((f) => f.id === faturaId);
+
+      // Só replicate se a fatura sendo editada NÃO tem leitura
+      const deveReplicar =
+        faturaEditando &&
+        (!faturaEditando.Leitura || !faturaEditando.Leitura.leitura);
+
+      setDataLeituraAtuais((prev) => {
+        const novasDatas = { ...prev, [faturaId]: selectedDate };
+
+        if (deveReplicar) {
+          faturasSelecionadas.forEach((fatura) => {
+            // Só replique para faturas sem leitura informada (exceto a atual)
+            if (
+              fatura.id !== faturaId &&
+              (!fatura.Leitura || !fatura.Leitura.leitura)
+            ) {
+              novasDatas[fatura.id] = selectedDate;
+            }
+          });
+        }
+
+        return novasDatas;
+      });
     }
   };
 
@@ -794,9 +848,11 @@ const LeiturasDetalhesScreen: React.FC = () => {
 
     try {
       // Formatar a data para envio
-      const dataFormatada = new Date(dataLeituraAtuais[fatura.id])
-        .toISOString()
-        .split("T")[0]; // Formato YYYY-MM-DD
+      // Formatar a data para envio sem problemas de timezone
+      const dataLocal = new Date(dataLeituraAtuais[fatura.id]);
+      const dataFormatada = `${dataLocal.getFullYear()}-${String(
+        dataLocal.getMonth() + 1
+      ).padStart(2, "0")}-${String(dataLocal.getDate()).padStart(2, "0")}`;
 
       // Verificar se está online ou offline
       const netInfo = await NetInfo.fetch();
@@ -1196,16 +1252,18 @@ const LeiturasDetalhesScreen: React.FC = () => {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
       >
-        <View style={[styles.header, { backgroundColor: colors.card }]}>
+        <View style={[styles.header, { backgroundColor: "#005266" }]}>
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.replace("/(drawer)/(tabs)/leituras")}
           >
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
-          <View>
-            <Text style={styles.headerTitle}>Detalhes de Leituras</Text>
-            <Text style={styles.headerSubtitle}>{mesAnoSelecionado}</Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>Captura de Leituras</Text>
+            <View style={styles.periodBadge}>
+              <Text style={styles.periodText}>{mesAnoSelecionado}</Text>
+            </View>
           </View>
         </View>
 
@@ -1332,8 +1390,31 @@ const styles = StyleSheet.create({
   keyboardAvoidingView: {
     flex: 1,
   },
+  headerContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "white",
+    marginRight: 10,
+  },
+  periodBadge: {
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.3)",
+  },
+  periodText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 16,
+  },
   header: {
-    backgroundColor: "#2a9d8f",
     padding: 16,
     paddingBottom: 20,
     flexDirection: "row",
@@ -1342,15 +1423,13 @@ const styles = StyleSheet.create({
   backButton: {
     marginRight: 16,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "white",
+  headerTextContainer: {
+    flex: 1,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: "rgba(255, 255, 255, 0.8)",
-    marginTop: 4,
+    fontSize: 18, // Aumentando um pouco para ficar mais legível
+    color: "rgba(255, 255, 255, 0.9)", // Tornando um pouco mais opaco
+    fontWeight: "normal",
   },
 
   // Status Bar (informações sobre quantidades)
