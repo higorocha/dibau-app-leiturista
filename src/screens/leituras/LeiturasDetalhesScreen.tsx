@@ -1251,21 +1251,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
-      >
-        <View style={[styles.header, { backgroundColor: "#005266" }]}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.replace("/(drawer)/(tabs)/leituras")}
-          >
-            <Ionicons name="arrow-back" size={24} color="white" />
-          </TouchableOpacity>
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Captura de Leituras</Text>
-            <View style={styles.periodBadge}>
-              <Text style={styles.periodText}>{mesAnoSelecionado}</Text>
-            </View>
-          </View>
-        </View>
+      >         
 
         {/* Barra de status com contadores */}
         {renderStatusBar()}

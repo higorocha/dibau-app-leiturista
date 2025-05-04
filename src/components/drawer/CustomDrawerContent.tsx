@@ -17,10 +17,11 @@ import { useAuth } from "@/src/contexts/AuthContext";
 import { useTheme } from "@react-navigation/native";
 import moment from "moment-timezone";
 import "moment/locale/pt-br";
-import * as Updates from "expo-updates"; // Adicione esta linha
+import { UpdateService } from '@/src/components/UpdateHandler';
+import Toast from 'react-native-toast-message';
 
 moment.locale("pt-br");
-
+// Verifique se estamos no Expo Go
 const { width } = Dimensions.get("window");
 const isTablet = width > 600;
 
@@ -30,27 +31,40 @@ const CustomDrawerContent = (props: any) => {
 
   const handleCheckForUpdates = async () => {
     try {
-      console.log("Verificando atualizações...");
-      const update = await Updates.checkForUpdateAsync();
-
-      if (update.isAvailable) {
-        console.log("Atualização disponível, baixando...");
-        await Updates.fetchUpdateAsync();
-
-        Alert.alert(
-          "Atualização disponível",
-          "Uma nova versão foi baixada. Deseja reiniciar o app para aplicá-la?",
-          [
-            { text: "Cancelar", style: "cancel" },
-            { text: "Reiniciar", onPress: () => Updates.reloadAsync() },
-          ]
-        );
+      // Mostrar toast de verificação em andamento
+      Toast.show({
+        type: "info",
+        text1: "Verificando atualizações",
+        text2: "Por favor, aguarde...",
+        position: "bottom",
+        visibilityTime: 2000,
+      });
+  
+      // Verificar atualizações usando o serviço compartilhado
+      if (UpdateService.checkManually) {
+        await UpdateService.checkManually(true);
       } else {
-        Alert.alert("Sem atualizações", "Seu app está atualizado!");
+        console.error("Serviço de atualização não está disponível");
+        // Mostrar toast de erro
+        Toast.show({
+          type: "error",
+          text1: "Serviço indisponível",
+          text2: "Não foi possível verificar atualizações neste momento",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
       }
     } catch (error) {
       console.error("Erro ao verificar atualizações:", error);
-      Alert.alert("Erro", "Não foi possível verificar atualizações.");
+      
+      // Mostrar toast de erro
+      Toast.show({
+        type: "error",
+        text1: "Erro na verificação",
+        text2: "Não foi possível verificar atualizações",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     }
   };
 
@@ -225,13 +239,12 @@ const CustomDrawerContent = (props: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F5F5", // Cor de fundo clara fixa
   },
   header: {
     padding: 16,
     paddingTop: Platform.OS === "ios" ? 44 : 16,
     paddingBottom: 24,
-    backgroundColor: "#008bac99", // Cor azul fixa
+    backgroundColor: "#008bac99",
     alignItems: "center",
   },
   avatarContainer: {
@@ -274,7 +287,7 @@ const styles = StyleSheet.create({
   drawerContentContainer: {
     flex: 1,
     justifyContent: "space-between",
-    backgroundColor: "#FFFFFF", // Fundo branco fixo
+    backgroundColor: "#F5F5F5"
   },
   drawerScrollContent: {
     paddingTop: 16,
@@ -286,7 +299,7 @@ const styles = StyleSheet.create({
   menuItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F0F0F0", // Cinza claro fixo
+    backgroundColor: "#f0f0f0",
     borderRadius: 12,
     marginBottom: 12,
     padding: 12,
@@ -303,14 +316,14 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(0, 139, 172, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(0, 139, 172, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 16,
   },
   menuText: {
     fontSize: isTablet ? 16 : 14,
-    color: "#333333", // Texto escuro fixo
+    color: "#333333",
     fontWeight: "500",
   },
   logoutButton: {
@@ -318,7 +331,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderTopWidth: 0.5,
-    borderTopColor: "#F0F0F0", // Borda clara fixa
+    borderTopColor: "#f0f0f0",
     marginBottom: 8,
   },
   logoutText: {
@@ -329,10 +342,10 @@ const styles = StyleSheet.create({
   },
   footer: {
     padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#F0F0F0", // Borda clara fixa
+    borderTopWidth: 2,
+    borderTopColor: "#E0E4E8",
+    backgroundColor: "#F5F5F5",
     alignItems: "center",
-    backgroundColor: "#FFFFFF", // Fundo branco fixo
   },
   footerText: {
     fontSize: isTablet ? 14 : 12,
@@ -344,6 +357,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    
   },
   logoWrapper: {
     alignItems: "center",
@@ -362,7 +376,7 @@ const styles = StyleSheet.create({
   divider: {
     height: isTablet ? 30 : 24,
     width: 1,
-    backgroundColor: "#E0E0E0", // Divisor cinza claro fixo
+    backgroundColor: "#E0E4E8",
     marginHorizontal: 12,
   },
 });
