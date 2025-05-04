@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Dimensions,
   Platform,
+  Alert,
 } from "react-native";
 import { DrawerContentScrollView } from "@react-navigation/drawer";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,6 +17,8 @@ import { useAuth } from "@/src/contexts/AuthContext";
 import { useTheme } from "@react-navigation/native";
 import moment from "moment-timezone";
 import "moment/locale/pt-br";
+import * as Updates from "expo-updates"; // Adicione esta linha
+
 moment.locale("pt-br");
 
 const { width } = Dimensions.get("window");
@@ -24,6 +27,32 @@ const isTablet = width > 600;
 const CustomDrawerContent = (props: any) => {
   const { user, logout } = useAuth();
   const { colors } = useTheme();
+
+  const handleCheckForUpdates = async () => {
+    try {
+      console.log("Verificando atualizações...");
+      const update = await Updates.checkForUpdateAsync();
+
+      if (update.isAvailable) {
+        console.log("Atualização disponível, baixando...");
+        await Updates.fetchUpdateAsync();
+
+        Alert.alert(
+          "Atualização disponível",
+          "Uma nova versão foi baixada. Deseja reiniciar o app para aplicá-la?",
+          [
+            { text: "Cancelar", style: "cancel" },
+            { text: "Reiniciar", onPress: () => Updates.reloadAsync() },
+          ]
+        );
+      } else {
+        Alert.alert("Sem atualizações", "Seu app está atualizado!");
+      }
+    } catch (error) {
+      console.error("Erro ao verificar atualizações:", error);
+      Alert.alert("Erro", "Não foi possível verificar atualizações.");
+    }
+  };
 
   // Obter as iniciais do nome do usuário
   const getUserInitials = useMemo(() => {
@@ -140,6 +169,18 @@ const CustomDrawerContent = (props: any) => {
         {/* Botão de Sair (agora posicionado no final da área flexível) */}
         <TouchableOpacity
           style={styles.logoutButton}
+          onPress={handleCheckForUpdates}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="sync-outline" size={22} color="#2a9d8f" />
+          <Text style={[styles.logoutText, { color: "#2a9d8f" }]}>
+            Buscar Atualizações
+          </Text>
+        </TouchableOpacity>
+
+        {/* Botão de Sair (agora posicionado no final da área flexível) */}
+        <TouchableOpacity
+          style={styles.logoutButton}
           onPress={() => logout()}
           activeOpacity={0.7}
         >
@@ -184,12 +225,13 @@ const CustomDrawerContent = (props: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#F5F5F5", // Cor de fundo clara fixa
   },
   header: {
     padding: 16,
     paddingTop: Platform.OS === "ios" ? 44 : 16,
     paddingBottom: 24,
-    backgroundColor: "#008bac99",
+    backgroundColor: "#008bac99", // Cor azul fixa
     alignItems: "center",
   },
   avatarContainer: {
@@ -232,6 +274,7 @@ const styles = StyleSheet.create({
   drawerContentContainer: {
     flex: 1,
     justifyContent: "space-between",
+    backgroundColor: "#FFFFFF", // Fundo branco fixo
   },
   drawerScrollContent: {
     paddingTop: 16,
@@ -243,7 +286,7 @@ const styles = StyleSheet.create({
   menuItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#F0F0F0", // Cinza claro fixo
     borderRadius: 12,
     marginBottom: 12,
     padding: 12,
@@ -267,7 +310,7 @@ const styles = StyleSheet.create({
   },
   menuText: {
     fontSize: isTablet ? 16 : 14,
-    color: "#333333",
+    color: "#333333", // Texto escuro fixo
     fontWeight: "500",
   },
   logoutButton: {
@@ -275,7 +318,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderTopWidth: 0.5,
-    borderTopColor: "#f0f0f0",
+    borderTopColor: "#F0F0F0", // Borda clara fixa
     marginBottom: 8,
   },
   logoutText: {
@@ -287,8 +330,9 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
+    borderTopColor: "#F0F0F0", // Borda clara fixa
     alignItems: "center",
+    backgroundColor: "#FFFFFF", // Fundo branco fixo
   },
   footerText: {
     fontSize: isTablet ? 14 : 12,
@@ -318,7 +362,7 @@ const styles = StyleSheet.create({
   divider: {
     height: isTablet ? 30 : 24,
     width: 1,
-    backgroundColor: "#e0e0e0",
+    backgroundColor: "#E0E0E0", // Divisor cinza claro fixo
     marginHorizontal: 12,
   },
 });

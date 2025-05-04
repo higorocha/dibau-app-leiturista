@@ -11,7 +11,8 @@
     "newArchEnabled": true,
     "updates": {
       "fallbackToCacheTimeout": 0,
-      "checkAutomatically": "ON_ERROR_RECOVERY"
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "url": "https://u.expo.dev/8182f75d-927d-45df-900b-b6ece4780706"
     },
     "ios": {
       "supportsTablet": true,
@@ -28,6 +29,11 @@
       },
       "package": "com.sistemairrigacao.app",
       "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "CAMERA",

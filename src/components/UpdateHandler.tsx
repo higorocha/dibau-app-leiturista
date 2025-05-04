@@ -1,8 +1,20 @@
 // src/components/UpdateHandler.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, Modal, TouchableOpacity, StyleSheet } from 'react-native';
+import { 
+  View, 
+  Text, 
+  ActivityIndicator, 
+  Modal, 
+  TouchableOpacity, 
+  StyleSheet, 
+  Platform,
+  Dimensions,
+  SafeAreaView
+} from 'react-native';
 import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
+
+const { width, height } = Dimensions.get('window');
 
 const UpdateHandler: React.FC = () => {
   const [isChecking, setIsChecking] = useState(false);
@@ -13,7 +25,15 @@ const UpdateHandler: React.FC = () => {
 
   useEffect(() => {
     if (!__DEV__) {
+      // Verificar atualizações quando o app abre
       checkForUpdates();
+      
+      // Verificar atualizações periodicamente (a cada 30 minutos)
+      const interval = setInterval(() => {
+        checkForUpdates();
+      }, 30 * 60 * 1000);
+      
+      return () => clearInterval(interval);
     }
   }, []);
 
@@ -57,99 +77,145 @@ const UpdateHandler: React.FC = () => {
     <Modal
       visible={showModal}
       transparent={true}
-      animationType="slide"
+      animationType="fade"
+      statusBarTranslucent={true}
+      hardwareAccelerated={true}
       onRequestClose={() => setShowModal(false)}
     >
-      <View style={styles.modalContainer}>
-        <View style={styles.modalContent}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="cloud-download-outline" size={48} color="#2a9d8f" />
-          </View>
-          
-          <Text style={styles.modalTitle}>Nova atualização disponível</Text>
-          <Text style={styles.modalDescription}>
-            Uma nova versão do aplicativo está disponível. Recomendamos que você atualize agora para ter acesso às últimas funcionalidades e correções.
-          </Text>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBackground}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalContent}>
+                <View style={styles.iconWrapper}>
+                  <View style={styles.iconContainer}>
+                    <Ionicons name="cloud-download-outline" size={48} color="#2a9d8f" />
+                  </View>
+                </View>
+                
+                <View style={styles.contentWrapper}>
+                  <Text style={styles.modalTitle}>Nova atualização disponível</Text>
+                  <Text style={styles.modalDescription}>
+                    Uma nova versão do aplicativo está disponível. Recomendamos que você atualize agora para ter acesso às últimas funcionalidades e correções.
+                  </Text>
 
-          {isDownloading && (
-            <View style={styles.progressContainer}>
-              <Text style={styles.progressText}>Baixando...</Text>
-              <ActivityIndicator size="small" color="#2a9d8f" style={styles.progressIndicator} />
+                  {isDownloading && (
+                    <View style={styles.progressContainer}>
+                      <Text style={styles.progressText}>Baixando atualização...</Text>
+                      <ActivityIndicator size="small" color="#2a9d8f" style={styles.progressIndicator} />
+                    </View>
+                  )}
+
+                  <View style={styles.buttonContainer}>
+                    <TouchableOpacity 
+                      style={[styles.button, styles.cancelButton]} 
+                      onPress={() => setShowModal(false)}
+                      disabled={isDownloading}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cancelButtonText}>Atualizar depois</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.button, styles.updateButton]} 
+                      onPress={downloadAndInstallUpdate}
+                      disabled={isDownloading}
+                      activeOpacity={0.8}
+                    >
+                      {isDownloading ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <Text style={styles.updateButtonText}>Atualizar agora</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
             </View>
-          )}
-
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={[styles.button, styles.cancelButton]} 
-              onPress={() => setShowModal(false)}
-              disabled={isDownloading}
-            >
-              <Text style={styles.cancelButtonText}>Atualizar depois</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.button, styles.updateButton]} 
-              onPress={downloadAndInstallUpdate}
-              disabled={isDownloading}
-            >
-              {isDownloading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.updateButtonText}>Atualizar agora</Text>
-              )}
-            </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  modalContainer: {
+  safeArea: {
     flex: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 999999,
+    elevation: 999999,
+  },
+  modalBackground: {
+    width: width > 600 ? '60%' : '90%',
+    maxWidth: 400,
+    backgroundColor: 'white',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 20,
+    ...Platform.select({
+      android: {
+        elevation: 30,
+      },
+    }),
+  },
+  modalContainer: {
+    overflow: 'hidden',
+    borderRadius: 16,
   },
   modalContent: {
-    width: '90%',
-    backgroundColor: 'white',
-    borderRadius: 12,
     padding: 24,
+  },
+  iconWrapper: {
+    marginBottom: 24,
     alignItems: 'center',
   },
   iconContainer: {
-    marginBottom: 16,
     backgroundColor: 'rgba(42, 157, 143, 0.1)',
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 84,
+    height: 84,
+    borderRadius: 42,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  contentWrapper: {
+    alignItems: 'center',
+  },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
+    color: '#1a1a1a',
+    marginBottom: 12,
     textAlign: 'center',
   },
   modalDescription: {
     fontSize: 16,
-    color: '#666',
-    marginBottom: 24,
+    color: '#4a4a4a',
+    marginBottom: 28,
     textAlign: 'center',
-    lineHeight: 22,
+    lineHeight: 24,
+    paddingHorizontal: 8,
   },
   progressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 28,
   },
   progressText: {
     color: '#2a9d8f',
     marginRight: 8,
+    fontSize: 16,
   },
   progressIndicator: {
     marginLeft: 8,
@@ -158,27 +224,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
+    gap: 12,
   },
   button: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    minWidth: 120,
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
   },
   cancelButton: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   updateButton: {
     backgroundColor: '#2a9d8f',
+    shadowColor: '#2a9d8f',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   cancelButtonText: {
-    color: '#666',
+    color: '#4a4a4a',
     fontWeight: '600',
+    fontSize: 16,
   },
   updateButtonText: {
-    color: '#fff',
+    color: '#ffffff',
     fontWeight: '600',
+    fontSize: 16,
   },
 });
 
