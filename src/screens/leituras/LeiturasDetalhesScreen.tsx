@@ -33,6 +33,7 @@ import DatePicker from "react-native-date-picker";
 // Após as outras importações
 import ImagemLeituraModal from "../../components/leituras/ImagemLeituraModal";
 import ImagemLeituraService from "../../services/ImagemLeituraService";
+const FATURAS_STORAGE_KEY = 'leituras_faturas_selecionadas';
 
 // Interface para Fatura
 interface Fatura {
@@ -536,6 +537,65 @@ const LeiturasDetalhesScreen: React.FC = () => {
   const totalLidas = Object.values(leiturasSalvas).filter(Boolean).length;
   const faltamLer = totalFaturas - totalLidas;
 
+  // Adicione este useEffect como primeiro efeito do componente, logo após as declarações de estado
+useEffect(() => {
+  // Esta função será executada quando o componente for montado
+  const carregarFaturasEditadas = async () => {
+    try {
+      // Carregar as faturas do AsyncStorage
+      const faturasStorage = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
+      
+      if (faturasStorage) {
+        const faturasArmazenadas = JSON.parse(faturasStorage) as Fatura[];
+        
+        // Verificar se são faturas do mês atual
+        if (faturasArmazenadas.length > 0) {
+          console.log(`[DEBUG] Usando faturas armazenadas do AsyncStorage (${faturasArmazenadas.length})`);
+          
+          // Inicializar os estados com os valores das faturas armazenadas
+          const leiturasAtuaisTmp: { [key: number]: string } = {};
+          const datasLeiturasTmp: { [key: number]: Date } = {};
+          const leiturasEditadasTmp: { [key: number]: boolean } = {};
+          
+          faturasArmazenadas.forEach((fatura: Fatura) => {
+            if (fatura.Leitura) {
+              // Guardar leitura como string para o input
+              leiturasAtuaisTmp[fatura.id] = fatura.Leitura.leitura?.toString() || '';
+              
+              // Guardar data da leitura
+              if (fatura.Leitura.data_leitura) {
+                try {
+                  datasLeiturasTmp[fatura.id] = new Date(fatura.Leitura.data_leitura);
+                } catch (e) {
+                  // Fallback para data atual se houver erro
+                  datasLeiturasTmp[fatura.id] = new Date();
+                }
+              }
+              
+              // Marcar como editada se tiver valor
+              if (fatura.Leitura.leitura && fatura.Leitura.leitura > 0) {
+                leiturasEditadasTmp[fatura.id] = true;
+              }
+            }
+          });
+          
+          // Atualizar estados
+          setLeituraAtuais(leiturasAtuaisTmp);
+          setDataLeituraAtuais(datasLeiturasTmp);
+          setLeiturasSalvas(leiturasEditadasTmp);
+          
+          // Substituir as faturas do contexto pelas faturas armazenadas
+          console.log(`[DEBUG] Atualizando faturas no componente`);
+        }
+      }
+    } catch (error) {
+      console.error("[ERROR] Erro ao carregar faturas do AsyncStorage:", error);
+    }
+  };
+  
+  carregarFaturasEditadas();
+}, []);
+
   // Animação do painel de filtros
   useEffect(() => {
     Animated.timing(filterAnimation, {
@@ -869,6 +929,9 @@ const LeiturasDetalhesScreen: React.FC = () => {
         data_leitura: dataFormatada,
         updatedAt: new Date().toISOString(),
       };
+
+      console.log(`[DEBUG] Fatura ${fatura.id} salva localmente, valor: ${leituraAtualNum}`);
+
 
       // Marcar como salvo independente do modo online/offline
       setLeiturasSalvas((prev) => ({

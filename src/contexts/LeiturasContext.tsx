@@ -65,12 +65,20 @@ export const LeiturasProvider: React.FC<{children: ReactNode}> = ({ children }) 
   // Nova função para atualizar apenas uma fatura específica
   const atualizarFaturaLocal = async (faturaId: number, dados: any) => {
     try {
+      console.log(`[DEBUG] Atualizando fatura local ID ${faturaId}`, dados);
+      
+      // Cria uma cópia atualizada das faturas
       const faturasAtualizadas = faturasSelecionadas.map(f => 
         f.id === faturaId ? { ...f, ...dados } : f
       );
       
+      // Atualiza o estado
       setFaturasSelecionadasState(faturasAtualizadas);
+      
+      // IMPORTANTE: Persiste no AsyncStorage
       await AsyncStorage.setItem(FATURAS_STORAGE_KEY, JSON.stringify(faturasAtualizadas));
+      
+      console.log(`[DEBUG] Fatura ${faturaId} atualizada e salva no AsyncStorage`);
     } catch (error) {
       console.error('[LeiturasContext] Erro ao atualizar fatura local:', error);
     }
