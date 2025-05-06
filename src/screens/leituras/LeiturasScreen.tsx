@@ -24,6 +24,10 @@ import NetInfo from "@react-native-community/netinfo";
 import Toast from "react-native-toast-message";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
 
+// Adicione após as importações:
+const FATURAS_STORAGE_KEY = 'leituras_faturas_selecionadas';
+const MES_ANO_STORAGE_KEY = 'leituras_mes_ano_selecionado';
+
 // Interface para o objeto de leitura mensal
 interface Fatura {
   id: number;
@@ -69,7 +73,7 @@ const LeiturasScreen: React.FC = () => {
 
   const { user } = useAuth();
   const { colors } = useTheme();
-  const { setFaturasSelecionadas, setMesAnoSelecionado } = useLeiturasContext();
+  const { setFaturasSelecionadas, setMesAnoSelecionado, mesAnoSelecionado } = useLeiturasContext();
 
   
 
@@ -278,6 +282,73 @@ const LeiturasScreen: React.FC = () => {
             // 3. Salvar timestamp
             await AsyncStorage.setItem("leituras_timestamp", timestamp);
             console.log("[DEBUG] Dados fragmentados salvos com sucesso");
+
+            try {
+              const storedFaturas = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
+              const storedMesAno = await AsyncStorage.getItem(MES_ANO_STORAGE_KEY);
+              
+              if (storedFaturas && storedMesAno) {
+                console.log("[DEBUG] Dados do contexto encontrados, mesclando com novos dados");
+                const faturasEditadas = JSON.parse(storedFaturas);
+                
+                // Verificar se o mês/ano corresponde ao atual
+                if (storedMesAno === mesAnoSelecionado) {
+                  // Para cada leitura mensal, verificar se suas faturas já foram editadas
+                  const leiturasMensaisModificadas = leiturasMensais.map(leituraMensal => {
+                    // Se for o mês atual selecionado
+                    if (leituraMensal.mesAno === storedMesAno) {
+                      // Verificar cada fatura neste mês
+                      const faturasModificadas = leituraMensal.faturas.map(fatura => {
+                        // Procurar por esta fatura nos dados editados
+                        const faturaEditada = faturasEditadas.find((f: Fatura) => f.id === fatura.id);
+                        if (faturaEditada && faturaEditada.Leitura) {
+                          // Se encontrar, preservar os dados editados
+                          return {
+                            ...fatura,
+                            valor_leitura_m3: faturaEditada.valor_leitura_m3 || fatura.valor_leitura_m3,
+                            Leitura: {
+                              ...fatura.Leitura,
+                              ...faturaEditada.Leitura
+                            }
+                          };
+                        }
+                        return fatura;
+                      });
+                      
+                      // Retornar uma nova cópia do objeto leituraMensal com faturas modificadas
+                      return {
+                        ...leituraMensal,
+                        faturas: faturasModificadas
+                      };
+                    }
+                    return leituraMensal;
+                  });
+                  
+                  console.log("[DEBUG] Dados mesclados com sucesso");
+                  
+                  // Use as leituras modificadas para atualizar a interface
+                  setLeituras(leiturasMensaisModificadas);
+                  setLastSyncTime(timestamp);
+                  setHasMore(false);
+                  
+                  // Continuar com o resto da função
+                  await salvarTimestampSincronizacao();
+                  
+                  Toast.show({
+                    type: "success",
+                    text1: "Leituras atualizadas",
+                    text2: "Dados de leituras sincronizados com sucesso",
+                    visibilityTime: 2000,
+                  });
+                  
+                  // Retorne desta função para evitar a atualização duplicada abaixo
+                  return;
+                }
+              }
+            } catch (contextError) {
+              console.error("[DEBUG] Erro ao mesclar dados do contexto:", contextError);
+              // Continue mesmo se houver erro na mesclagem
+            }
   
             // Atualizar interface
             setLeituras(leiturasMensais);

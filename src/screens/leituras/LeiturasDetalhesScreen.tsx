@@ -472,8 +472,12 @@ const LeiturasDetalhesScreen: React.FC = () => {
   }, []);
 
   // Obtendo os dados do contexto
-  const { faturasSelecionadas, mesAnoSelecionado, setFaturasSelecionadas } =
-    useLeiturasContext();
+  const {
+    faturasSelecionadas,
+    mesAnoSelecionado,
+    setFaturasSelecionadas,
+    atualizarFaturaLocal,
+  } = useLeiturasContext();
 
   // Estados para edição e status
   const [loading, setLoading] = useState(false);
@@ -883,25 +887,20 @@ const LeiturasDetalhesScreen: React.FC = () => {
         );
 
         if (response.status === 200) {
-          // Atualizar no contexto
-          setFaturasSelecionadas(
-            faturasSelecionadas.map((f) => {
-              if (f.id === fatura.id) {
-                return {
-                  ...f,
-                  valor_leitura_m3: leituraAtualNum,
-                  Leitura: {
-                    ...f.Leitura,
-                    leitura: leituraAtualNum,
-                    data_leitura: dataFormatada,
-                  },
-                };
-              }
-              return f;
-            })
-          );
+          // MODIFICADO: Usar a nova função atualizarFaturaLocal para persistência
+          const dadosAtualizados = {
+            valor_leitura_m3: leituraAtualNum,
+            Leitura: {
+              ...(fatura.Leitura || {}),
+              leitura: leituraAtualNum,
+              data_leitura: dataFormatada,
+            },
+          };
 
-          // Remover da lista de pendentes se existir
+          // Atualizar apenas a fatura específica localmente
+          atualizarFaturaLocal(fatura.id, dadosAtualizados);
+
+          // Remover da lista de pendentes se existir - código original mantido
           if (pendingSyncs[fatura.id]) {
             const updatedPending = { ...pendingSyncs };
             delete updatedPending[fatura.id];
@@ -926,6 +925,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
             }
           }
 
+          // Resto do código original mantido
           Toast.show({
             type: "success",
             text1: "Leitura salva com sucesso!",
@@ -946,39 +946,40 @@ const LeiturasDetalhesScreen: React.FC = () => {
         }
       } else {
         // MODO OFFLINE: Salvar localmente para sincronização posterior
-        // 1. Atualizar dados no contexto
-        const updatedFaturas = faturasSelecionadas.map((f) => {
-          if (f.id === fatura.id) {
-            return {
-              ...f,
-              Leitura: {
-                ...f.Leitura,
-                leitura: leituraAtualNum,
-                data_leitura: dataFormatada,
-              },
-            };
-          }
-          return f;
-        });
-
-        setFaturasSelecionadas(updatedFaturas);
-
+        // MODIFICADO: Use a nova função atualizarFaturaLocal
+        const dadosAtualizados = {
+          valor_leitura_m3: leituraAtualNum,
+          Leitura: {
+            ...(fatura.Leitura || {}),
+            leitura: leituraAtualNum,
+            data_leitura: dataFormatada,
+          },
+        };
+        
+        // Atualizar apenas a fatura específica localmente
+        atualizarFaturaLocal(fatura.id, dadosAtualizados);
+        
         // 2. Salvar dados da atualização para sync posterior
         try {
           // Buscar atualizações pendentes existentes
           const pendingDataStr =
             (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
           const pendingData = JSON.parse(pendingDataStr);
-
+          
           // Adicionar/atualizar esta leitura
-          pendingData[fatura.id] = updateData;
-
+          pendingData[fatura.id] = {
+            id: fatura.id,
+            leitura: leituraAtualNum,
+            data_leitura: dataFormatada,
+            updatedAt: new Date().toISOString(),
+          };
+          
           // Salvar no AsyncStorage
           await AsyncStorage.setItem(
             "pendingLeituraUpdates",
             JSON.stringify(pendingData)
           );
-
+          
           // Atualizar status de pendência
           const updatedPending = { ...pendingSyncs, [fatura.id]: true };
           setPendingSyncs(updatedPending);
@@ -986,7 +987,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
             "pendingLeiturasSyncs",
             JSON.stringify(updatedPending)
           );
-
+          
           Toast.show({
             type: "info",
             text1: "Leitura salva localmente",
@@ -994,12 +995,12 @@ const LeiturasDetalhesScreen: React.FC = () => {
             position: "bottom",
             visibilityTime: 2000,
           });
-
+          
           setEditingId(null);
-
+          
           // Reaplicar filtro e ordenação após salvar
           aplicarFiltroEOrdenacao(
-            updatedFaturas,
+            faturasSelecionadas,
             filtro,
             ordenacao,
             searchText,
@@ -1251,8 +1252,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
-      >         
-
+      >
         {/* Barra de status com contadores */}
         {renderStatusBar()}
 
