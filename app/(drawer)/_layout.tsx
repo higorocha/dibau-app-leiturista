@@ -14,19 +14,27 @@ export default function DrawerLayout() {
       <Drawer
         drawerContent={(props) => <CustomDrawerContent {...props} />}
         screenOptions={{
+          // Remova a linha headerShown: false, ou modifique para:
+          headerShown: true, // Mostrar cabeçalhos por padrão
           headerStyle: { backgroundColor: colors.card },
           headerTintColor: "#fff",
           headerLeft: () => <DrawerToggleButton tintColor="#fff" />,
           drawerStyle: { backgroundColor: colors.background },
           drawerActiveTintColor: "#33c05ff0",
           drawerInactiveTintColor: "#999",
-          headerShown: false,
         }}
       >
         <Drawer.Screen
           name="(tabs)"
           options={{
-            headerShown: false, // Garantindo que o header seja mostrado
+            headerShown: false, // Apenas as tabs não mostram cabeçalho
+          }}
+        />
+        {/* Adicione explicitamente a tela LeiturasDetalhes com suas opções */}
+        <Drawer.Screen
+          name="LeiturasDetalhes" 
+          options={{
+            headerShown: true, // Força mostrar o cabeçalho
           }}
         />
       </Drawer>

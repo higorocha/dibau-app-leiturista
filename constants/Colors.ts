@@ -3,24 +3,25 @@
  * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
  */
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+// Definir cores comuns para ambos os modos
+const primaryColor = '#151718'; // Cor do background do modo escuro
+const tintColor = '#fff';       // Cor do modo escuro
 
 export const Colors = {
   light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
+    text: '#ECEDEE',           // Usar a mesma cor de texto do modo escuro
+    background: primaryColor,  // Usar o mesmo background do modo escuro
+    tint: tintColor,           // Usar o mesmo tint do modo escuro
+    icon: '#9BA1A6',           // Usar a mesma cor de ícone do modo escuro
+    tabIconDefault: '#9BA1A6', // Usar a mesma cor de ícone de tab do modo escuro
+    tabIconSelected: tintColor // Usar a mesma cor de ícone selecionado do modo escuro
   },
   dark: {
     text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
+    background: primaryColor,
+    tint: tintColor,
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
+    tabIconSelected: tintColor
   },
 };

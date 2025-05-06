@@ -1239,7 +1239,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Indicador de modo offline */}
       {isOffline && (
         <View style={styles.offlineBar}>
@@ -1364,7 +1364,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         }
         onImageUploaded={handleImagemUploaded}
       />
-    </SafeAreaView>
+    </View>
   );
 };
 
