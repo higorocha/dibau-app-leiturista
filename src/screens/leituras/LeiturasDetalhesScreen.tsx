@@ -538,63 +538,67 @@ const LeiturasDetalhesScreen: React.FC = () => {
   const faltamLer = totalFaturas - totalLidas;
 
   // Adicione este useEffect como primeiro efeito do componente, logo após as declarações de estado
-useEffect(() => {
-  // Esta função será executada quando o componente for montado
-  const carregarFaturasEditadas = async () => {
-    try {
-      // Carregar as faturas do AsyncStorage
-      const faturasStorage = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
-      
-      if (faturasStorage) {
-        const faturasArmazenadas = JSON.parse(faturasStorage) as Fatura[];
+  useEffect(() => {
+    // Esta função será executada quando o componente for montado
+    const carregarFaturasEditadas = async () => {
+      try {
+        console.log("[DEBUG] Carregando dados mais recentes do AsyncStorage");
+        // Carregar as faturas do AsyncStorage
+        const faturasStorage = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
         
-        // Verificar se são faturas do mês atual
-        if (faturasArmazenadas.length > 0) {
-          console.log(`[DEBUG] Usando faturas armazenadas do AsyncStorage (${faturasArmazenadas.length})`);
+        if (faturasStorage) {
+          const faturasArmazenadas = JSON.parse(faturasStorage) as Fatura[];
           
-          // Inicializar os estados com os valores das faturas armazenadas
-          const leiturasAtuaisTmp: { [key: number]: string } = {};
-          const datasLeiturasTmp: { [key: number]: Date } = {};
-          const leiturasEditadasTmp: { [key: number]: boolean } = {};
-          
-          faturasArmazenadas.forEach((fatura: Fatura) => {
-            if (fatura.Leitura) {
-              // Guardar leitura como string para o input
-              leiturasAtuaisTmp[fatura.id] = fatura.Leitura.leitura?.toString() || '';
-              
-              // Guardar data da leitura
-              if (fatura.Leitura.data_leitura) {
-                try {
-                  datasLeiturasTmp[fatura.id] = new Date(fatura.Leitura.data_leitura);
-                } catch (e) {
-                  // Fallback para data atual se houver erro
-                  datasLeiturasTmp[fatura.id] = new Date();
+          // Verificar se são faturas válidas
+          if (faturasArmazenadas && faturasArmazenadas.length > 0) {
+            console.log(`[DEBUG] Faturas carregadas do AsyncStorage: ${faturasArmazenadas.length}`);
+            
+            // PASSO CRUCIAL: Atualizar imediatamente faturasSelecionadas com os dados do AsyncStorage
+            // Isso sobrescreve qualquer dado que possa ter vindo do contexto
+            setFaturasSelecionadas(faturasArmazenadas);
+            
+            // Inicializar os estados com os valores das faturas armazenadas
+            const leiturasAtuaisTmp: { [key: number]: string } = {};
+            const datasLeiturasTmp: { [key: number]: Date } = {};
+            const leiturasEditadasTmp: { [key: number]: boolean } = {};
+            
+            faturasArmazenadas.forEach((fatura: Fatura) => {
+              if (fatura.Leitura) {
+                // Guardar leitura como string para o input
+                leiturasAtuaisTmp[fatura.id] = fatura.Leitura.leitura?.toString() || '';
+                
+                // Guardar data da leitura
+                if (fatura.Leitura.data_leitura) {
+                  try {
+                    datasLeiturasTmp[fatura.id] = new Date(fatura.Leitura.data_leitura);
+                  } catch (e) {
+                    // Fallback para data atual se houver erro
+                    datasLeiturasTmp[fatura.id] = new Date();
+                  }
+                }
+                
+                // Marcar como editada se tiver valor
+                if (fatura.Leitura.leitura && fatura.Leitura.leitura > 0) {
+                  leiturasEditadasTmp[fatura.id] = true;
                 }
               }
-              
-              // Marcar como editada se tiver valor
-              if (fatura.Leitura.leitura && fatura.Leitura.leitura > 0) {
-                leiturasEditadasTmp[fatura.id] = true;
-              }
-            }
-          });
-          
-          // Atualizar estados
-          setLeituraAtuais(leiturasAtuaisTmp);
-          setDataLeituraAtuais(datasLeiturasTmp);
-          setLeiturasSalvas(leiturasEditadasTmp);
-          
-          // Substituir as faturas do contexto pelas faturas armazenadas
-          console.log(`[DEBUG] Atualizando faturas no componente`);
+            });
+            
+            // Atualizar os estados locais
+            setLeituraAtuais(leiturasAtuaisTmp);
+            setDataLeituraAtuais(datasLeiturasTmp);
+            setLeiturasSalvas(leiturasEditadasTmp);
+            
+            console.log(`[DEBUG] Estados locais atualizados com dados do AsyncStorage`);
+          }
         }
+      } catch (error) {
+        console.error("[ERROR] Erro ao carregar faturas do AsyncStorage:", error);
       }
-    } catch (error) {
-      console.error("[ERROR] Erro ao carregar faturas do AsyncStorage:", error);
-    }
-  };
-  
-  carregarFaturasEditadas();
-}, []);
+    };
+    
+    carregarFaturasEditadas();
+  }, []);  // Sem dependências para executar apenas uma vez
 
   // Animação do painel de filtros
   useEffect(() => {
@@ -859,30 +863,28 @@ useEffect(() => {
   };
 
   const handleSave = async (fatura: Fatura) => {
-    // Validações
+    // 1. VALIDAÇÕES INICIAIS
     const leituraAtual = leituraAtuais[fatura.id];
     if (!leituraAtual || leituraAtual.trim() === "") {
       Alert.alert("Erro", "Por favor, informe a leitura atual.");
       return;
     }
-
-    // Remover a formatação para enviar para a API
+  
+    // Processamento do valor da leitura
     let leituraAtualNum = parseFloat(
       leituraAtual.replace(/\./g, "").replace(",", ".")
     );
-    // Verificar se o hidrômetro tem flag x10 ativada
+    
+    // Verificar flag x10 do hidrômetro
     const multiplicarPor10 = fatura.Hidrometro.x10 === true;
-
-    // Verificar se a leitura atual é menor que a anterior
+    
+    // Comparação com a leitura anterior (na mesma base)
     const leituraAnterior = fatura.leitura_anterior || 0;
-
-    // CORREÇÃO: Para a comparação, aplicamos a multiplicação antes
-    // para garantir que a comparação seja feita na mesma base
     const leituraAtualParaComparacao = multiplicarPor10
       ? leituraAtualNum * 10
       : leituraAtualNum;
-
-    // Verificar se a leitura atual é menor que a anterior
+  
+    // Alerta se a leitura atual for menor que a anterior
     if (leituraAtualParaComparacao < leituraAnterior) {
       const confirmaZerado = await new Promise<boolean>((resolve) => {
         Alert.alert(
@@ -894,201 +896,217 @@ useEffect(() => {
           ]
         );
       });
-
+  
       if (!confirmaZerado) return;
     }
-
-    // NOVO: Multiplicar o valor por 10 se necessário
+  
+    // Aplicar multiplicador x10 se necessário
     if (multiplicarPor10) {
       leituraAtualNum = leituraAtualNum * 10;
       console.log(`[LEITURA] Multiplicando valor por 10: ${leituraAtualNum}`);
     }
-
-    // Mostrar indicador de carregamento para esta linha
+  
+    // Indicador de salvamento
     setSalvando((prev) => ({
       ...prev,
       [fatura.id]: true,
     }));
-
+  
     try {
+      // 2. PREPARAÇÃO DOS DADOS
       // Formatar a data para envio
-      // Formatar a data para envio sem problemas de timezone
       const dataLocal = new Date(dataLeituraAtuais[fatura.id]);
       const dataFormatada = `${dataLocal.getFullYear()}-${String(
         dataLocal.getMonth() + 1
       ).padStart(2, "0")}-${String(dataLocal.getDate()).padStart(2, "0")}`;
-
-      // Verificar se está online ou offline
+  
+      // Verificar conexão
       const netInfo = await NetInfo.fetch();
       const isConnected = netInfo.isConnected;
-
-      // Criar objeto com os dados da atualização
-      const updateData = {
-        id: fatura.id,
-        leitura: leituraAtualNum,
-        data_leitura: dataFormatada,
-        updatedAt: new Date().toISOString(),
+  
+      // Criar objeto com os dados atualizados
+      const dadosAtualizados = {
+        valor_leitura_m3: leituraAtualNum,
+        Leitura: {
+          ...(fatura.Leitura || {}),
+          leitura: leituraAtualNum,
+          data_leitura: dataFormatada,
+        },
       };
-
-      console.log(`[DEBUG] Fatura ${fatura.id} salva localmente, valor: ${leituraAtualNum}`);
-
-
-      // Marcar como salvo independente do modo online/offline
+  
+      // 3. ATUALIZAÇÃO DOS ESTADOS LOCAIS (Para ambos modos: online e offline)
+      // Marcar como lido/editado no estado local
       setLeiturasSalvas((prev) => ({
         ...prev,
         [fatura.id]: true,
       }));
-
-      if (isConnected) {
-        // MODO ONLINE: Chamar a API diretamente
-        const response = await api.put(
-          `/faturamensal/atualizar-leitura/${fatura.id}`,
-          {
-            leitura: leituraAtualNum,
-            data_leitura: dataFormatada,
-          }
-        );
-
-        if (response.status === 200) {
-          // MODIFICADO: Usar a nova função atualizarFaturaLocal para persistência
-          const dadosAtualizados = {
+      
+      // Guardar no AsyncStorage via contexto
+      await atualizarFaturaLocal(fatura.id, dadosAtualizados);
+      
+      // NOVA ADIÇÃO: Atualizar imediatamente os valores visíveis na interface
+      setLeituraAtuais(prev => ({
+        ...prev,
+        [fatura.id]: leituraAtualNum.toString()
+      }));
+      
+      // Também atualizar o objeto faturasSelecionadas para a UI
+      const faturasAtualizadasUI = faturasSelecionadas.map(f => {
+        if (f.id === fatura.id) {
+          return {
+            ...f,
             valor_leitura_m3: leituraAtualNum,
             Leitura: {
-              ...(fatura.Leitura || {}),
+              ...(f.Leitura || {}),
               leitura: leituraAtualNum,
               data_leitura: dataFormatada,
-            },
-          };
-
-          // Atualizar apenas a fatura específica localmente
-          atualizarFaturaLocal(fatura.id, dadosAtualizados);
-
-          // Remover da lista de pendentes se existir - código original mantido
-          if (pendingSyncs[fatura.id]) {
-            const updatedPending = { ...pendingSyncs };
-            delete updatedPending[fatura.id];
-            setPendingSyncs(updatedPending);
-
-            // Atualizar AsyncStorage
-            await AsyncStorage.setItem(
-              "pendingLeiturasSyncs",
-              JSON.stringify(updatedPending)
-            );
-
-            // Verificar se existem atualizações pendentes e remover esta
-            const pendingDataStr =
-              (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
-            const pendingData = JSON.parse(pendingDataStr);
-            if (pendingData[fatura.id]) {
-              delete pendingData[fatura.id];
-              await AsyncStorage.setItem(
-                "pendingLeituraUpdates",
-                JSON.stringify(pendingData)
-              );
             }
-          }
-
-          // Resto do código original mantido
-          Toast.show({
-            type: "success",
-            text1: "Leitura salva com sucesso!",
-            position: "bottom",
-            visibilityTime: 2000,
-          });
-
-          setEditingId(null);
-
-          // Reaplicar filtro e ordenação após salvar
-          aplicarFiltroEOrdenacao(
-            faturasSelecionadas,
-            filtro,
-            ordenacao,
-            searchText,
-            { ...leiturasSalvas, [fatura.id]: true }
+          };
+        }
+        return f;
+      });
+      
+      // Atualizar explicitamente o estado local do componente
+      setFaturasSelecionadas(faturasAtualizadasUI);
+      
+      console.log(`[DEBUG] Fatura ${fatura.id} salva localmente, valor: ${leituraAtualNum}`);
+  
+      // 4. PROCESSAMENTO BASEADO NO MODO (ONLINE OU OFFLINE)
+      if (isConnected) {
+        // === MODO ONLINE: Enviar para o servidor ===
+        try {
+          const response = await api.put(
+            `/faturamensal/atualizar-leitura/${fatura.id}`,
+            {
+              leitura: leituraAtualNum,
+              data_leitura: dataFormatada,
+            }
           );
+  
+          if (response.status === 200) {
+            // Remover da lista de pendentes se existir
+            if (pendingSyncs[fatura.id]) {
+              const updatedPending = { ...pendingSyncs };
+              delete updatedPending[fatura.id];
+              setPendingSyncs(updatedPending);
+  
+              // Atualizar AsyncStorage de pendências
+              await AsyncStorage.setItem(
+                "pendingLeiturasSyncs",
+                JSON.stringify(updatedPending)
+              );
+  
+              // Remover dos dados de sincronização pendentes
+              const pendingDataStr =
+                (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
+              const pendingData = JSON.parse(pendingDataStr);
+              if (pendingData[fatura.id]) {
+                delete pendingData[fatura.id];
+                await AsyncStorage.setItem(
+                  "pendingLeituraUpdates",
+                  JSON.stringify(pendingData)
+                );
+              }
+            }
+  
+            // Notificar usuário do sucesso
+            Toast.show({
+              type: "success",
+              text1: "Leitura salva com sucesso!",
+              position: "bottom",
+              visibilityTime: 2000,
+            });
+          }
+        } catch (apiError) {
+          console.error("[ERROR] Erro ao enviar para o servidor:", apiError);
+          
+          // Mesmo com erro na API, mantemos os dados salvos localmente
+          // e adicionamos à lista de pendentes para sincronização posterior
+          await salvarParaSincronizacaoPosterior(fatura.id, leituraAtualNum, dataFormatada);
+          
+          Toast.show({
+            type: "warning",
+            text1: "Erro ao comunicar com servidor",
+            text2: "Dados salvos localmente e serão sincronizados posteriormente",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
         }
       } else {
-        // MODO OFFLINE: Salvar localmente para sincronização posterior
-        // MODIFICADO: Use a nova função atualizarFaturaLocal
-        const dadosAtualizados = {
-          valor_leitura_m3: leituraAtualNum,
-          Leitura: {
-            ...(fatura.Leitura || {}),
-            leitura: leituraAtualNum,
-            data_leitura: dataFormatada,
-          },
-        };
+        // === MODO OFFLINE: Salvar para sincronização posterior ===
+        await salvarParaSincronizacaoPosterior(fatura.id, leituraAtualNum, dataFormatada);
         
-        // Atualizar apenas a fatura específica localmente
-        atualizarFaturaLocal(fatura.id, dadosAtualizados);
-        
-        // 2. Salvar dados da atualização para sync posterior
-        try {
-          // Buscar atualizações pendentes existentes
-          const pendingDataStr =
-            (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
-          const pendingData = JSON.parse(pendingDataStr);
-          
-          // Adicionar/atualizar esta leitura
-          pendingData[fatura.id] = {
-            id: fatura.id,
-            leitura: leituraAtualNum,
-            data_leitura: dataFormatada,
-            updatedAt: new Date().toISOString(),
-          };
-          
-          // Salvar no AsyncStorage
-          await AsyncStorage.setItem(
-            "pendingLeituraUpdates",
-            JSON.stringify(pendingData)
-          );
-          
-          // Atualizar status de pendência
-          const updatedPending = { ...pendingSyncs, [fatura.id]: true };
-          setPendingSyncs(updatedPending);
-          await AsyncStorage.setItem(
-            "pendingLeiturasSyncs",
-            JSON.stringify(updatedPending)
-          );
-          
-          Toast.show({
-            type: "info",
-            text1: "Leitura salva localmente",
-            text2: "Será sincronizada quando houver conexão",
-            position: "bottom",
-            visibilityTime: 2000,
-          });
-          
-          setEditingId(null);
-          
-          // Reaplicar filtro e ordenação após salvar
-          aplicarFiltroEOrdenacao(
-            faturasSelecionadas,
-            filtro,
-            ordenacao,
-            searchText,
-            { ...leiturasSalvas, [fatura.id]: true }
-          );
-        } catch (storageError) {
-          console.error("Erro ao salvar dados offline:", storageError);
-          Alert.alert("Erro", "Não foi possível salvar os dados offline.");
-        }
+        Toast.show({
+          type: "info",
+          text1: "Leitura salva localmente",
+          text2: "Será sincronizada quando houver conexão",
+          position: "bottom",
+          visibilityTime: 2000,
+        });
       }
+  
+      // 5. FINALIZAÇÃO
+      // Sair do modo de edição
+      setEditingId(null);
+      
+      // Reaplicar filtro e ordenação
+      aplicarFiltroEOrdenacao(
+        faturasAtualizadasUI, // Usar a versão atualizada das faturas
+        filtro,
+        ordenacao,
+        searchText,
+        { ...leiturasSalvas, [fatura.id]: true }
+      );
+      
     } catch (error: any) {
-      console.error("Erro ao salvar leitura:", error);
+      console.error("[ERROR] Erro geral ao salvar leitura:", error);
       Alert.alert(
         "Erro",
-        error.response?.data?.error ||
-          "Erro ao salvar a leitura. Tente novamente."
+        error.response?.data?.error || "Erro ao salvar a leitura. Tente novamente."
       );
     } finally {
+      // Desativar indicador de salvamento
       setSalvando((prev) => ({
         ...prev,
         [fatura.id]: false,
       }));
     }
   };
-
+  
+  // Função auxiliar para salvar dados para sincronização posterior
+  const salvarParaSincronizacaoPosterior = async (
+    faturaId: number, 
+    leitura: number,
+    dataLeitura: string
+  ) => {
+    try {
+      // Buscar atualizações pendentes existentes
+      const pendingDataStr = (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
+      const pendingData = JSON.parse(pendingDataStr);
+      
+      // Adicionar/atualizar esta leitura
+      pendingData[faturaId] = {
+        id: faturaId,
+        leitura: leitura,
+        data_leitura: dataLeitura,
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // Salvar no AsyncStorage
+      await AsyncStorage.setItem("pendingLeituraUpdates", JSON.stringify(pendingData));
+      
+      // Atualizar status de pendência
+      const updatedPending = { ...pendingSyncs, [faturaId]: true };
+      setPendingSyncs(updatedPending);
+      await AsyncStorage.setItem("pendingLeiturasSyncs", JSON.stringify(updatedPending));
+      
+      console.log(`[DEBUG] Leitura ${faturaId} marcada para sincronização posterior`);
+      return true;
+    } catch (error) {
+      console.error("[ERROR] Erro ao salvar para sincronização posterior:", error);
+      return false;
+    }
+  };
   // Componente para o painel de filtros
   const renderFilterPanel = () => (
     <Animated.View

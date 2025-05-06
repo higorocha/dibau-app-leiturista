@@ -8,7 +8,7 @@ import {
   Dimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { formatarNumeroComMilhar } from "@/src/utils/formatters";
+import { formatarNumeroComMilhar, formatMesAno } from "@/src/utils/formatters";
 import Toast from "react-native-toast-message"; // Adicione esta linha
 
 // Verificar se é tablet
@@ -26,28 +26,9 @@ interface LeituraCardProps {
   onPress: () => void;
   isEmpty?: boolean;
   isAllFechada: boolean;
+  temDadosPendentes?: boolean; // Nova prop para indicar dados pendentes
+  onSincronizar?: () => void;  // Função para sincronizar
 }
-
-// Função auxiliar para formatar o mês/ano
-const formatMesAno = (mesAno: string): string => {
-  const [mes, ano] = mesAno.split("/");
-  const meses = [
-    "Janeiro",
-    "Fevereiro",
-    "Março",
-    "Abril",
-    "Maio",
-    "Junho",
-    "Julho",
-    "Agosto",
-    "Setembro",
-    "Outubro",
-    "Novembro",
-    "Dezembro",
-  ];
-
-  return `${meses[parseInt(mes) - 1]} de ${ano}`;
-};
 
 const LeituraCard: React.FC<LeituraCardProps> = ({
   mesAno,
@@ -59,6 +40,8 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
   onPress,
   isEmpty = false,
   isAllFechada,
+  temDadosPendentes = false,
+  onSincronizar,
 }) => {
   // Verificar se é um card vazio
   if (isEmpty) {
@@ -90,6 +73,20 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
       <View style={styles.cardHeader}>
         <Text style={styles.title}>Leituras {formatMesAno(mesAno)}</Text>
         <Text style={styles.subtitle}>Criado em: {dataFormatada}</Text>
+        
+        {/* Badge de sincronização */}
+        {temDadosPendentes && (
+          <TouchableOpacity 
+            style={styles.syncBadge}
+            onPress={(e) => {
+              e.stopPropagation(); // Evitar que o card seja aberto
+              if (onSincronizar) onSincronizar();
+            }}
+          >
+            <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+            <Text style={styles.syncBadgeText}>Sincronizar</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.statsContainer}>
@@ -244,6 +241,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
+  },
+  // Novos estilos para o badge de sincronização
+  syncBadge: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    backgroundColor: '#ff9800', // Laranja
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  syncBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
 

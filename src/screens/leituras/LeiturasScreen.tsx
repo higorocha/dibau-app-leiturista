@@ -1,5 +1,6 @@
 // src/screens/leituras/LeiturasScreen.tsx
 import React, { useState, useEffect, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import axios from "axios";
 import {
   View,
@@ -23,10 +24,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import Toast from "react-native-toast-message";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
+import { syncPendingLeituras } from "@/src/services/SyncService";
+import { formatMesAno } from "@/src/utils/formatters";
 
 // Adicione após as importações:
-const FATURAS_STORAGE_KEY = 'leituras_faturas_selecionadas';
-const MES_ANO_STORAGE_KEY = 'leituras_mes_ano_selecionado';
+const FATURAS_STORAGE_KEY = "leituras_faturas_selecionadas";
+const MES_ANO_STORAGE_KEY = "leituras_mes_ano_selecionado";
 
 // Interface para o objeto de leitura mensal
 interface Fatura {
@@ -57,8 +60,6 @@ interface LeituraMensal {
   isAllFechada: boolean;
 }
 
-
-
 const LeiturasScreen: React.FC = () => {
   const [leituras, setLeituras] = useState<LeituraMensal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,18 +71,172 @@ const LeiturasScreen: React.FC = () => {
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [sincronizandoEmBackground, setSincronizandoEmBackground] =
     useState(false);
+  const [mesesComDadosPendentes, setMesesComDadosPendentes] = useState<{
+    [key: string]: boolean;
+  }>({});
 
   const { user } = useAuth();
   const { colors } = useTheme();
-  const { setFaturasSelecionadas, setMesAnoSelecionado, mesAnoSelecionado } = useLeiturasContext();
-
-  
+  const { setFaturasSelecionadas, setMesAnoSelecionado, mesAnoSelecionado } =
+    useLeiturasContext();
 
   // Função para verificar conexão
   const checkConnection = async () => {
     const netInfo = await NetInfo.fetch();
     setIsOffline(!netInfo.isConnected);
     return netInfo.isConnected;
+  };
+
+  const verificarDadosPendentes = useCallback(async () => {
+    try {
+      console.log("[DEBUG] Iniciando verificação de dados pendentes");
+
+      // Verificar AMBAS as chaves do AsyncStorage
+      const [pendingSyncsStr, pendingUpdatesStr] = await Promise.all([
+        AsyncStorage.getItem("pendingLeiturasSyncs"),
+        AsyncStorage.getItem("pendingLeituraUpdates"),
+      ]);
+
+      // Inicializar array de IDs pendentes
+      let pendingIds: string[] = [];
+
+      // Verificar pendingSyncs
+      if (pendingSyncsStr) {
+        const pendingSyncs = JSON.parse(pendingSyncsStr);
+        pendingIds = Object.keys(pendingSyncs);
+        console.log(
+          `[DEBUG] IDs pendentes em pendingLeiturasSyncs: ${pendingIds.join(
+            ", "
+          )}`
+        );
+      }
+
+      // Verificar pendingUpdates (esta é a parte que estava faltando!)
+      if (pendingUpdatesStr) {
+        const pendingUpdates = JSON.parse(pendingUpdatesStr);
+        const updateIds = Object.keys(pendingUpdates);
+        console.log(
+          `[DEBUG] IDs pendentes em pendingLeituraUpdates: ${updateIds.join(
+            ", "
+          )}`
+        );
+
+        // Adicionar IDs de pendingUpdates se ainda não estiverem em pendingIds
+        updateIds.forEach((id) => {
+          if (!pendingIds.includes(id)) {
+            pendingIds.push(id);
+          }
+        });
+      }
+
+      if (pendingIds.length === 0) {
+        console.log("[DEBUG] Nenhum ID pendente encontrado");
+        setMesesComDadosPendentes({});
+        return;
+      }
+
+      // O resto do código permanece igual...
+      const mesesPendentes: { [key: string]: boolean } = {};
+
+      leituras.forEach((leitura) => {
+        const temPendente = leitura.faturas.some((fatura) => {
+          const faturaIdStr = String(fatura.id);
+          const temPend = pendingIds.includes(faturaIdStr);
+          if (temPend) {
+            console.log(
+              `[DEBUG] Fatura ${faturaIdStr} do mês ${leitura.mesAno} está pendente`
+            );
+          }
+          return temPend;
+        });
+
+        if (temPendente) {
+          console.log(`[DEBUG] Mês ${leitura.mesAno} tem leituras pendentes`);
+          mesesPendentes[leitura.mesAno] = true;
+        }
+      });
+
+      console.log(
+        `[DEBUG] Meses pendentes: ${
+          Object.keys(mesesPendentes).join(", ") || "nenhum"
+        }`
+      );
+      setMesesComDadosPendentes(mesesPendentes);
+    } catch (error) {
+      console.error("[ERROR] Erro ao verificar dados pendentes:", error);
+    }
+  }, [leituras]);
+
+  // Chame a função quando as leituras mudarem
+  useEffect(() => {
+    verificarDadosPendentes();
+  }, [leituras, verificarDadosPendentes]);
+
+  // Adicione a função para sincronizar um mês específico
+  const sincronizarMes = async (mesAno: string) => {
+    try {
+      if (isOffline) {
+        Toast.show({
+          type: "error",
+          text1: "Sem conexão",
+          text2: "Não é possível sincronizar sem conexão com a internet",
+          position: "bottom",
+          visibilityTime: 2000,
+        });
+        return;
+      }
+
+      // Encontrar a leitura correspondente a este mês
+      const leitura = leituras.find((l) => l.mesAno === mesAno);
+      if (!leitura) return;
+
+      // Iniciar sincronização para este mês
+      Toast.show({
+        type: "info",
+        text1: "Sincronizando...",
+        text2: `Enviando dados de ${formatMesAno(mesAno)}`,
+        position: "bottom",
+        visibilityTime: 2000,
+      });
+
+      // Usar o serviço de sincronização existente
+      const resultado = await syncPendingLeituras();
+
+      if (resultado.success) {
+        Toast.show({
+          type: "success",
+          text1: "Sincronização concluída",
+          text2: `${resultado.syncedCount} leituras sincronizadas`,
+          position: "bottom",
+          visibilityTime: 2000,
+        });
+
+        // Atualizar a lista de meses com pendências
+        verificarDadosPendentes();
+
+        // Recarregar dados se necessário
+        if (resultado.syncedCount > 0) {
+          carregarLeituras(true);
+        }
+      } else {
+        Toast.show({
+          type: "error",
+          text1: "Erro na sincronização",
+          text2: "Não foi possível sincronizar os dados",
+          position: "bottom",
+          visibilityTime: 2000,
+        });
+      }
+    } catch (error) {
+      console.error("[ERROR] Erro ao sincronizar mês:", error);
+      Toast.show({
+        type: "error",
+        text1: "Erro",
+        text2: "Ocorreu um erro durante a sincronização",
+        position: "bottom",
+        visibilityTime: 2000,
+      });
+    }
   };
 
   // Função para carregar dados offline
@@ -116,25 +271,28 @@ const LeiturasScreen: React.FC = () => {
   const limparImagensFaturasFechadas = async (leituras: LeituraMensal[]) => {
     try {
       let totalRemovidas = 0;
-      
+
       // Verificar cada mês de leituras
       for (const leitura of leituras) {
         if (leitura.isAllFechada) {
-          const removidas = await ImagemLeituraService.limparImagensFaturasFechadas(
-            leitura.mesAno, 
-            leitura.isAllFechada, 
-            leitura.faturas
-          );
-          
+          const removidas =
+            await ImagemLeituraService.limparImagensFaturasFechadas(
+              leitura.mesAno,
+              leitura.isAllFechada,
+              leitura.faturas
+            );
+
           totalRemovidas += removidas;
         }
       }
-      
+
       if (totalRemovidas > 0) {
-        console.log(`[LEITURAS] ${totalRemovidas} imagens de leituras removidas do armazenamento local`);
+        console.log(
+          `[LEITURAS] ${totalRemovidas} imagens de leituras removidas do armazenamento local`
+        );
       }
     } catch (error) {
-      console.error('[LEITURAS] Erro ao limpar imagens locais:', error);
+      console.error("[LEITURAS] Erro ao limpar imagens locais:", error);
     }
   };
 
@@ -142,32 +300,45 @@ const LeiturasScreen: React.FC = () => {
   const deveAtualizar = useCallback(async () => {
     try {
       // Verificar timestamp da última sincronização
-      const ultimaSincronizacao = await AsyncStorage.getItem("leituras_ultima_sincronizacao");
-      
+      const ultimaSincronizacao = await AsyncStorage.getItem(
+        "leituras_ultima_sincronizacao"
+      );
+
       if (!ultimaSincronizacao) {
-        console.log("[DEBUG] Nenhuma sincronização anterior encontrada, deve sincronizar");
+        console.log(
+          "[DEBUG] Nenhuma sincronização anterior encontrada, deve sincronizar"
+        );
         return true; // Nunca sincronizou antes
       }
-      
+
       // Garantir que estamos lidando com timestamps UTC
       const ultimaData = new Date(ultimaSincronizacao).getTime();
       const agora = new Date().getTime();
       const duasHorasEmMS = 2 * 60 * 60 * 1000; // 2 horas em milissegundos
       const diferenca = agora - ultimaData;
-      
+
       // Verifica se passaram pelo menos 2 horas desde a última sincronização
       const deveSincronizar = diferenca > duasHorasEmMS;
-      
+
       // Logs detalhados para debugging
-      console.log(`[DEBUG] Timestamp da última sincronização: ${ultimaSincronizacao}`);
-      console.log(`[DEBUG] Última sincronização: ${new Date(ultimaData).toLocaleString()}`);
+      console.log(
+        `[DEBUG] Timestamp da última sincronização: ${ultimaSincronizacao}`
+      );
+      console.log(
+        `[DEBUG] Última sincronização: ${new Date(ultimaData).toLocaleString()}`
+      );
       console.log(`[DEBUG] Horário atual: ${new Date(agora).toLocaleString()}`);
-      console.log(`[DEBUG] Diferença em minutos: ${Math.floor(diferenca / 60000)}`);
+      console.log(
+        `[DEBUG] Diferença em minutos: ${Math.floor(diferenca / 60000)}`
+      );
       console.log(`[DEBUG] Deve sincronizar (passou 2h): ${deveSincronizar}`);
-      
+
       return deveSincronizar;
     } catch (error) {
-      console.error("[DEBUG] Erro ao verificar timestamp de sincronização:", error);
+      console.error(
+        "[DEBUG] Erro ao verificar timestamp de sincronização:",
+        error
+      );
       return true; // Em caso de erro, sincroniza por precaução
     }
   }, []);
@@ -179,7 +350,10 @@ const LeiturasScreen: React.FC = () => {
       console.log(`[DEBUG] Salvando timestamp de sincronização: ${timestamp}`);
       await AsyncStorage.setItem("leituras_ultima_sincronizacao", timestamp);
     } catch (error) {
-      console.error("[DEBUG] Erro ao salvar timestamp de sincronização:", error);
+      console.error(
+        "[DEBUG] Erro ao salvar timestamp de sincronização:",
+        error
+      );
     }
   };
 
@@ -191,18 +365,18 @@ const LeiturasScreen: React.FC = () => {
       );
       return;
     }
-  
+
     console.log("[DEBUG] sincronizarDados iniciado");
     try {
       setSincronizandoEmBackground(true);
-  
+
       // Verificar conexão antes de tentar sincronizar
       const netInfo = await NetInfo.fetch();
       console.log(
         "[DEBUG] Status da rede:",
         netInfo.isConnected ? "Conectado" : "Desconectado"
       );
-  
+
       if (!netInfo.isConnected) {
         console.log("[DEBUG] Sem conexão de rede, abortando sincronização");
         Toast.show({
@@ -213,7 +387,7 @@ const LeiturasScreen: React.FC = () => {
         });
         return;
       }
-  
+
       // Indicador discreto de sincronização
       Toast.show({
         type: "info",
@@ -221,26 +395,26 @@ const LeiturasScreen: React.FC = () => {
         text2: "Atualizando dados de leituras em segundo plano",
         visibilityTime: 2000,
       });
-  
+
       console.log(
         "[DEBUG] Enviando requisição para /faturamensal/app/leituras"
       );
-  
+
       try {
         // Requisição com timeout maior
         const response = await api.get("/faturamensal/app/leituras", {
           timeout: 30000, // 30 segundos
         });
-  
+
         console.log("[DEBUG] Resposta recebida, status:", response.status);
-  
+
         if (response.data && response.data.success) {
           console.log("[DEBUG] Dados recebidos com sucesso");
           const { data, timestamp } = response.data;
-  
+
           // Garantir que data é do tipo esperado
           const leiturasMensais = data as LeituraMensal[];
-  
+
           if (!leiturasMensais || leiturasMensais.length === 0) {
             console.log("[DEBUG] Lista de leituras vazia na resposta");
             Toast.show({
@@ -251,14 +425,14 @@ const LeiturasScreen: React.FC = () => {
             });
             return;
           }
-  
+
           // Log do tamanho dos dados
           console.log(
             `[DEBUG] Recebidas ${leiturasMensais.length} leituras, ${
               JSON.stringify(leiturasMensais).length
             } bytes`
           );
-  
+
           // ARMAZENAMENTO FRAGMENTADO
           try {
             // 1. Salvar índice dos meses
@@ -270,7 +444,7 @@ const LeiturasScreen: React.FC = () => {
             console.log(
               `[DEBUG] Índice de ${mesesDisponiveis.length} meses salvo`
             );
-  
+
             // 2. Salvar cada mês separadamente
             for (let i = 0; i < leiturasMensais.length; i++) {
               const mes = leiturasMensais[i];
@@ -278,86 +452,37 @@ const LeiturasScreen: React.FC = () => {
               await AsyncStorage.setItem(chave, JSON.stringify(mes));
               console.log(`[DEBUG] Dados do mês ${mes.mesAno} salvos`);
             }
-  
+
             // 3. Salvar timestamp
             await AsyncStorage.setItem("leituras_timestamp", timestamp);
             console.log("[DEBUG] Dados fragmentados salvos com sucesso");
 
-            try {
-              const storedFaturas = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
-              const storedMesAno = await AsyncStorage.getItem(MES_ANO_STORAGE_KEY);
-              
-              if (storedFaturas && storedMesAno) {
-                console.log("[DEBUG] Dados do contexto encontrados, mesclando com novos dados");
-                const faturasEditadas = JSON.parse(storedFaturas);
-                
-                // Verificar se o mês/ano corresponde ao atual
-                if (storedMesAno === mesAnoSelecionado) {
-                  // Para cada leitura mensal, verificar se suas faturas já foram editadas
-                  const leiturasMensaisModificadas = leiturasMensais.map(leituraMensal => {
-                    // Se for o mês atual selecionado
-                    if (leituraMensal.mesAno === storedMesAno) {
-                      // Verificar cada fatura neste mês
-                      const faturasModificadas = leituraMensal.faturas.map(fatura => {
-                        // Procurar por esta fatura nos dados editados
-                        const faturaEditada = faturasEditadas.find((f: Fatura) => f.id === fatura.id);
-                        if (faturaEditada && faturaEditada.Leitura) {
-                          // Se encontrar, preservar os dados editados
-                          return {
-                            ...fatura,
-                            valor_leitura_m3: faturaEditada.valor_leitura_m3 || fatura.valor_leitura_m3,
-                            Leitura: {
-                              ...fatura.Leitura,
-                              ...faturaEditada.Leitura
-                            }
-                          };
-                        }
-                        return fatura;
-                      });
-                      
-                      // Retornar uma nova cópia do objeto leituraMensal com faturas modificadas
-                      return {
-                        ...leituraMensal,
-                        faturas: faturasModificadas
-                      };
-                    }
-                    return leituraMensal;
-                  });
-                  
-                  console.log("[DEBUG] Dados mesclados com sucesso");
-                  
-                  // Use as leituras modificadas para atualizar a interface
-                  setLeituras(leiturasMensaisModificadas);
-                  setLastSyncTime(timestamp);
-                  setHasMore(false);
-                  
-                  // Continuar com o resto da função
-                  await salvarTimestampSincronizacao();
-                  
-                  Toast.show({
-                    type: "success",
-                    text1: "Leituras atualizadas",
-                    text2: "Dados de leituras sincronizados com sucesso",
-                    visibilityTime: 2000,
-                  });
-                  
-                  // Retorne desta função para evitar a atualização duplicada abaixo
-                  return;
-                }
+            // 4. IMPORTANTE: Se estamos visualizando algum mês específico, atualizar também o storage do contexto
+            // para garantir que os dados mais recentes sejam usados
+            if (mesAnoSelecionado) {
+              const mesSelecionado = leiturasMensais.find(
+                (m) => m.mesAno === mesAnoSelecionado
+              );
+              if (mesSelecionado) {
+                // Sobrescrever as faturas armazenadas para este mês
+                await AsyncStorage.setItem(
+                  FATURAS_STORAGE_KEY,
+                  JSON.stringify(mesSelecionado.faturas)
+                );
+                console.log(
+                  `[DEBUG] Faturas do mês ${mesAnoSelecionado} atualizadas no storage do contexto`
+                );
               }
-            } catch (contextError) {
-              console.error("[DEBUG] Erro ao mesclar dados do contexto:", contextError);
-              // Continue mesmo se houver erro na mesclagem
             }
-  
-            // Atualizar interface
+
+            // 5. Atualizar a interface com os dados do servidor (prioridade sobre dados locais)
             setLeituras(leiturasMensais);
             setLastSyncTime(timestamp);
             setHasMore(false);
-  
-            // Salvar timestamp de sincronização
+
+            // 6. Salvar timestamp de sincronização
             await salvarTimestampSincronizacao();
-  
+
             Toast.show({
               type: "success",
               text1: "Leituras atualizadas",
@@ -369,7 +494,7 @@ const LeiturasScreen: React.FC = () => {
               "[DEBUG] Erro ao salvar no AsyncStorage:",
               storageError
             );
-  
+
             // Mesmo com erro, atualiza interface
             setLeituras(leiturasMensais);
             setLastSyncTime(timestamp);
@@ -501,73 +626,51 @@ const LeiturasScreen: React.FC = () => {
     }
   };
 
-  const carregarLeituras = useCallback(async (param?: boolean | number) => {
-    const forcarSincronizacao = typeof param === 'boolean' ? param : false;
-    const page = typeof param === 'number' ? param : 1;
-    
-    // Log para debugging
-    console.log(`[DEBUG] carregarLeituras iniciado - forçar: ${forcarSincronizacao}, página: ${page}`);
-    
-    try {
-      // Só mostrar loading se não estiver refreshing e for a primeira página ou lista vazia
-      if (!refreshing && (page === 1 || leituras.length === 0)) {
-        setLoading(true);
-      }
-      
-      setError("");
-  
-      // Primeiro, carregamos dados locais (apenas na primeira página)
-      let dadosLocaisEncontrados = false;
-      if (page === 1) {
-        console.log('[DEBUG] Tentando carregar dados locais');
-        dadosLocaisEncontrados = await carregarDadosLocais();
-        console.log(`[DEBUG] Dados locais encontrados: ${dadosLocaisEncontrados}`);
-      }
-      
-      // Verificar conexão
-      const isConnected = await checkConnection();
-      console.log(`[DEBUG] Dispositivo conectado: ${isConnected}`);
-      
-      // Verificar se devemos sincronizar (apenas se for primeira página ou forçado)
-      let deveSincronizar = false;
-      if (page === 1 || forcarSincronizacao) {
-        // Apenas forçar a sincronização se o usuário explicitamente pediu (pull-to-refresh)
-        // ou se já passou o tempo mínimo desde a última sincronização
-        if (forcarSincronizacao) {
-          deveSincronizar = true;
-          console.log("[DEBUG] Sincronização forçada pelo usuário");
-        } else {
-          deveSincronizar = await deveAtualizar();
-          console.log(`[DEBUG] Sincronização automática: ${deveSincronizar ? "necessária" : "não necessária"}`);
+  const carregarLeituras = useCallback(
+    async (param?: boolean | number) => {
+      const forcarSincronizacao = typeof param === "boolean" ? param : false;
+      const page = typeof param === "number" ? param : 1;
+
+      console.log(
+        `[DEBUG] carregarLeituras iniciado - forçar: ${forcarSincronizacao}, página: ${page}`
+      );
+
+      try {
+        if (!refreshing && (page === 1 || leituras.length === 0)) {
+          setLoading(true);
         }
-        console.log(`[DEBUG] Deve sincronizar: ${deveSincronizar}`);
+
+        setError("");
+
+        // Carregar dados locais
+        let dadosLocaisEncontrados = false;
+        if (page === 1) {
+          dadosLocaisEncontrados = await carregarDadosLocais();
+        }
+
+        // Verificar conexão
+        const isConnected = await checkConnection();
+
+        // Apenas sincronizar se forçado explicitamente (pull-to-refresh)
+        if (isConnected && forcarSincronizacao && page === 1) {
+          await sincronizarDados();
+        } else if (page > 1 && leituras.length === 0) {
+          setHasMore(false);
+        }
+
+        if (typeof param === "number" && leituras.length > 0) {
+          setCurrentPage(page);
+        }
+      } catch (error) {
+        console.error("[DEBUG] Erro ao carregar leituras:", error);
+        setError("Falha ao carregar as leituras. Verifique sua conexão.");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      
-      // Se está online, primeira página ou forçado, e deve sincronizar, fazemos a sincronização
-      if (isConnected && deveSincronizar && (page === 1 || forcarSincronizacao)) {
-        console.log('[DEBUG] Iniciando sincronização');
-        await sincronizarDados();
-      } else if (page > 1 && leituras.length === 0) {
-        // Se estamos tentando carregar mais páginas mas não temos dados, desabilitar paginação
-        console.log('[DEBUG] Lista vazia e tentando carregar mais páginas, desabilitando paginação');
-        setHasMore(false);
-      } else {
-        console.log('[DEBUG] Não vai sincronizar');
-      }
-      
-      // Atualizar currentPage apenas se houver dados e for carregamento de página adicional
-      if (typeof param === 'number' && leituras.length > 0) {
-        setCurrentPage(page);
-      }
-    } catch (error) {
-      console.error("[DEBUG] Erro ao carregar leituras:", error);
-      setError("Falha ao carregar as leituras. Verifique sua conexão.");
-    } finally {
-      console.log('[DEBUG] carregarLeituras finalizado, definindo loading e refreshing como false');
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [leituras.length, refreshing, deveAtualizar, sincronizarDados]);
+    },
+    [leituras.length, refreshing, sincronizarDados]
+  );
 
   const loadMore = useCallback(() => {
     // Adicionado para debugging
@@ -591,66 +694,179 @@ const LeiturasScreen: React.FC = () => {
 
   useEffect(() => {
     console.log("[DEBUG] useEffect principal iniciado");
-    
+
     // Verificar migração e inicializar dados
     const inicializar = async () => {
       try {
         // Verificar migração de dados (uma vez só)
-        const jaFezMigracao = await AsyncStorage.getItem('leituras_migracao_realizada');
+        const jaFezMigracao = await AsyncStorage.getItem(
+          "leituras_migracao_realizada"
+        );
         if (!jaFezMigracao) {
           console.log("[DEBUG] Realizando migração de dados");
           await limparCacheAntigo();
-          await AsyncStorage.setItem('leituras_migracao_realizada', 'true');
+          await AsyncStorage.setItem("leituras_migracao_realizada", "true");
         }
-  
+
         // Importante: carregar dados locais primeiro
         await carregarDadosLocais();
-        
-        // Verificar se deve sincronizar baseado no timestamp
-        const deveSincronizar = await deveAtualizar();
-        console.log(`[DEBUG] Deve sincronizar na inicialização: ${deveSincronizar}`);
-        
-        // Só sincronizar se necessário (primeira vez ou após 2h)
-        if (deveSincronizar) {
-          console.log("[DEBUG] Iniciando sincronização inicial");
-          await carregarLeituras(true); // Forçar sincronização
-        } else {
-          console.log("[DEBUG] Usando dados em cache (menos de 2h desde última sincronização)");
-          // Garantir que loading e refreshing estejam desativados
-          setLoading(false);
-          setRefreshing(false);
-        }
+        // Garantir que loading e refreshing estejam desativados
+        setLoading(false);
+        setRefreshing(false);
       } catch (error) {
-        console.error('[DEBUG] Erro ao inicializar:', error);
+        console.error("[DEBUG] Erro ao inicializar:", error);
         setLoading(false);
       }
     };
-    
+
     // Inicializar o app
     inicializar();
-    
+
     // Verificar conexão periodicamente
     const intervalId = setInterval(async () => {
       await checkConnection();
     }, 10000);
-    
+
     console.log("[DEBUG] useEffect principal configurado");
-    
+
     return () => {
       console.log("[DEBUG] useEffect principal sendo limpo");
       clearInterval(intervalId);
     };
   }, []);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    carregarLeituras(true); // Parâmetro true força sincronização
+  // Verificar dados pendentes quando a tela recebe foco
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log(
+        "[DEBUG] Tela LeiturasScreen recebeu foco, verificando pendências"
+      );
+      verificarDadosPendentes();
+
+      // Não precisamos de uma função de limpeza aqui
+      return () => {};
+    }, [verificarDadosPendentes])
+  );
+
+  const onRefresh = async () => {
+    // Antes de iniciar o refresh, verificar se há dados pendentes
+    try {
+      setRefreshing(true);
+      
+      // Verificar se existem dados pendentes de upload
+      const [pendingSyncsStr, pendingUpdatesStr] = await Promise.all([
+        AsyncStorage.getItem("pendingLeiturasSyncs"),
+        AsyncStorage.getItem("pendingLeituraUpdates")
+      ]);
+      
+      let temDadosPendentes = false;
+      
+      // Verificar pendingSyncs
+      if (pendingSyncsStr) {
+        const pendingSyncs = JSON.parse(pendingSyncsStr);
+        if (Object.keys(pendingSyncs).length > 0) {
+          temDadosPendentes = true;
+        }
+      }
+      
+      // Verificar pendingUpdates
+      if (!temDadosPendentes && pendingUpdatesStr) {
+        const pendingUpdates = JSON.parse(pendingUpdatesStr);
+        if (Object.keys(pendingUpdates).length > 0) {
+          temDadosPendentes = true;
+        }
+      }
+      
+      if (temDadosPendentes) {
+        // Há dados pendentes, bloquear o download e avisar o usuário
+        Toast.show({
+          type: "error",  // Alterado de "warning" para "error"
+          text1: "Sincronização bloqueada",
+          text2: "Existem dados pendentes de envio. Por favor, sincronize-os primeiro.",
+          position: "top",
+          visibilityTime: 3000,
+        });
+        
+        // Destacar visualmente onde estão os badges de sincronização
+        // Atualizar a verificação de dados pendentes para garantir que os badges estejam visíveis
+        verificarDadosPendentes();
+        
+        setRefreshing(false);
+        return;
+      }
+      
+      // Se não há dados pendentes, prosseguir com o download normal
+      carregarLeituras(true); // Parâmetro true força sincronização
+    } catch (error) {
+      console.error("[ERROR] Erro ao verificar dados pendentes:", error);
+      setRefreshing(false);
+    }
   };
 
   const handleCardPress = (leitura: LeituraMensal) => {
-    setFaturasSelecionadas(leitura.faturas);
-    setMesAnoSelecionado(leitura.mesAno);
-    router.push("/LeiturasDetalhes");
+    // Recuperar primeiro qualquer dado editado anteriormente para este mês
+    AsyncStorage.getItem(FATURAS_STORAGE_KEY)
+      .then((storedData) => {
+        let faturasParaUsar = leitura.faturas;
+
+        // Se houver dados armazenados, verificar se são do mesmo mês
+        if (storedData) {
+          const faturasArmazenadas = JSON.parse(storedData);
+
+          // Verificar se os dados armazenados são do mesmo mês selecionado
+          if (faturasArmazenadas && faturasArmazenadas.length > 0) {
+            const mesmoMes = mesAnoSelecionado === leitura.mesAno;
+
+            // Se for o mesmo mês, usar os dados armazenados (que podem conter edições)
+            if (mesmoMes) {
+              console.log(
+                "[DEBUG] Usando dados armazenados anteriormente para este mês"
+              );
+              faturasParaUsar = faturasArmazenadas;
+            }
+          }
+        }
+
+        // Salvar no AsyncStorage e navegar
+        AsyncStorage.setItem(
+          FATURAS_STORAGE_KEY,
+          JSON.stringify(faturasParaUsar)
+        )
+          .then(() => {
+            setFaturasSelecionadas(faturasParaUsar);
+            setMesAnoSelecionado(leitura.mesAno);
+            router.push("/LeiturasDetalhes");
+          })
+          .catch((error) => {
+            console.error(
+              "[ERROR] Erro ao salvar faturas no AsyncStorage:",
+              error
+            );
+            // Em caso de erro, continue com a navegação de qualquer forma
+            setFaturasSelecionadas(faturasParaUsar);
+            setMesAnoSelecionado(leitura.mesAno);
+            router.push("/LeiturasDetalhes");
+          });
+      })
+      .catch((error) => {
+        console.error("[ERROR] Erro ao ler faturas do AsyncStorage:", error);
+        // Em caso de erro, continue normalmente
+        AsyncStorage.setItem(
+          FATURAS_STORAGE_KEY,
+          JSON.stringify(leitura.faturas)
+        )
+          .then(() => {
+            setFaturasSelecionadas(leitura.faturas);
+            setMesAnoSelecionado(leitura.mesAno);
+            router.push("/LeiturasDetalhes");
+          })
+          .catch(() => {
+            // Último fallback
+            setFaturasSelecionadas(leitura.faturas);
+            setMesAnoSelecionado(leitura.mesAno);
+            router.push("/LeiturasDetalhes");
+          });
+      });
   };
 
   const renderFooter = () => {
@@ -668,20 +884,17 @@ const LeiturasScreen: React.FC = () => {
       </View>
     );
   };
-  
+
   const EmptyListComponent = React.memo(() => {
     const handleRetry = useCallback(() => {
       // Forçar sincronização
       carregarLeituras(true);
     }, []);
-    
+
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>Nenhuma leitura encontrada</Text>
-        <TouchableOpacity
-          style={styles.reloadButton}
-          onPress={handleRetry}
-        >
+        <TouchableOpacity style={styles.reloadButton} onPress={handleRetry}>
           <Text style={styles.reloadButtonText}>Tentar novamente</Text>
         </TouchableOpacity>
       </View>
@@ -721,6 +934,8 @@ const LeiturasScreen: React.FC = () => {
               faturas={item.faturas}
               onPress={() => handleCardPress(item)}
               isAllFechada={item.isAllFechada}
+              temDadosPendentes={mesesComDadosPendentes[item.mesAno] || false}
+              onSincronizar={() => sincronizarMes(item.mesAno)}
             />
           )}
           onEndReached={leituras.length > 0 ? loadMore : undefined}

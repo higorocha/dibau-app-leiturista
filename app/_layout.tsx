@@ -14,7 +14,6 @@ import Toast, { BaseToast, ErrorToast, ToastConfig, ToastProps } from 'react-nat
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { AuthProvider } from "@/src/contexts/AuthContext";
 import { LeiturasProvider } from "@/src/contexts/LeiturasContext";
-import { checkAndSync } from "@/src/services/SyncService";
 import NetInfo from '@react-native-community/netinfo';
 import { checkAndSyncCulturas } from "@/src/services/CulturasSyncService";
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -98,9 +97,6 @@ export default function RootLayout() {
               deveSincLeituras = (agora - ultimaData) > duasHorasEmMS;
             }
             
-            if (deveSincLeituras) {
-              checkAndSync(); // sincronização de leituras
-            }
             
             // Mesma lógica para culturas
             const ultimaSincCulturas = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
@@ -138,10 +134,6 @@ export default function RootLayout() {
                 deveSincLeituras = (agora - ultimaData) > duasHorasEmMS;
               }
               
-              if (deveSincLeituras) {
-                checkAndSync(); // sincronização de leituras
-                await AsyncStorage.setItem('leituras_ultima_sincronizacao', new Date().toISOString());
-              }
               
               // Mesma lógica para culturas
               const ultimaSincCulturas = await AsyncStorage.getItem('culturas_ultima_sincronizacao');

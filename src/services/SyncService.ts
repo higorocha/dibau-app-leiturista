@@ -75,7 +75,7 @@ export const syncPendingLeituras = async (): Promise<{success: boolean, syncedCo
   }
 };
 
-// Adicionar função para verificar e iniciar sincronização
+/* Adicionar função para verificar e iniciar sincronização
 export const checkAndSync = async (): Promise<void> => {
   try {
     // Verificar se há conexão
@@ -126,4 +126,4 @@ export const checkAndSync = async (): Promise<void> => {
   } catch (error) {
     console.error('Erro ao verificar sincronização:', error);
   }
-};
+};*/
