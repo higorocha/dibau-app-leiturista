@@ -15,9 +15,8 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { AuthProvider } from "@/src/contexts/AuthContext";
 import { LeiturasProvider } from "@/src/contexts/LeiturasContext";
 import NetInfo from '@react-native-community/netinfo';
-import { checkAndSyncCulturas } from "@/src/services/CulturasSyncService";
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import UpdateHandler from "@/src/components/UpdateHandler"; // Adicione esta linha
+import UpdateHandler from "@/src/components/UpdateHandler";
 
 
 const toastConfig: ToastConfig = {
@@ -86,7 +85,7 @@ export default function RootLayout() {
         // Verificar se passou o tempo mínimo desde a última sincronização
         const verificarEhSincronizarSeNecessario = async () => {
           try {
-            // Verificar leituras
+            // Verificar leituras (mantido, pois pode ser usado para outros processos)
             const ultimaSincLeituras = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
             const agora = new Date().getTime();
             const duasHorasEmMS = 2 * 60 * 60 * 1000;
@@ -97,18 +96,8 @@ export default function RootLayout() {
               deveSincLeituras = (agora - ultimaData) > duasHorasEmMS;
             }
             
+            // Nota: A verificação de culturas foi removida, pois a sincronização agora é manual
             
-            // Mesma lógica para culturas
-            const ultimaSincCulturas = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
-            let deveSincCulturas = true;
-            if (ultimaSincCulturas) {
-              const ultimaData = new Date(ultimaSincCulturas).getTime();
-              deveSincCulturas = (agora - ultimaData) > duasHorasEmMS;
-            }
-            
-            if (deveSincCulturas) {
-              checkAndSyncCulturas(); // sincronização de culturas
-            }
           } catch (error) {
             console.error('Erro ao verificar timestamp de sincronização:', error);
           }
@@ -123,7 +112,7 @@ export default function RootLayout() {
           // Quando a conexão é estabelecida, verificar se deve sincronizar
           const verificarEhSincronizarSeNecessario = async () => {
             try {
-              // Verificar leituras
+              // Verificar leituras (mantido, pois pode ser usado para outros processos)
               const ultimaSincLeituras = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
               const agora = new Date().getTime();
               const duasHorasEmMS = 2 * 60 * 60 * 1000;
@@ -134,19 +123,8 @@ export default function RootLayout() {
                 deveSincLeituras = (agora - ultimaData) > duasHorasEmMS;
               }
               
+              // Nota: A verificação de culturas foi removida, pois a sincronização agora é manual
               
-              // Mesma lógica para culturas
-              const ultimaSincCulturas = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
-              let deveSincCulturas = true;
-              if (ultimaSincCulturas) {
-                const ultimaData = new Date(ultimaSincCulturas).getTime();
-                deveSincCulturas = (agora - ultimaData) > duasHorasEmMS;
-              }
-              
-              if (deveSincCulturas) {
-                checkAndSyncCulturas(); // sincronização de culturas
-                await AsyncStorage.setItem('culturas_ultima_sincronizacao', new Date().toISOString());
-              }
             } catch (error) {
               console.error('Erro ao verificar timestamp de sincronização:', error);
             }

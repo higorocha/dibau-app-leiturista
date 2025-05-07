@@ -1,4 +1,5 @@
 // src/services/CulturasSyncService.ts
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import api from '../api/axiosConfig';
@@ -20,6 +21,17 @@ interface PendingCulturaData {
   deletedCultureIds: number[];
   timestamp: string;
 }
+
+// Interface para callbacks de progresso
+interface SyncProgressCallbacks {
+  onStart?: (total: number) => void;
+  onProgress?: (processed: number, total: number) => void;
+  onComplete?: (success: boolean, syncedCount: number) => void;
+  onCancel?: () => void;
+}
+
+// Variável para controlar cancelamento da sincronização
+let syncCancelled = false;
 
 // Função para salvar culturas offline com formato melhorado
 export const saveCulturasOffline = async (
@@ -43,6 +55,12 @@ export const saveCulturasOffline = async (
     // Salvar no AsyncStorage
     await AsyncStorage.setItem('pendingCulturasUpdates', JSON.stringify(pendingData));
     
+    // Atualizar lista de lotes pendentes
+    const pendingLotsStr = await AsyncStorage.getItem('pendingLotesStatus') || '{}';
+    const pendingLots = JSON.parse(pendingLotsStr);
+    pendingLots[loteId] = true;
+    await AsyncStorage.setItem('pendingLotesStatus', JSON.stringify(pendingLots));
+    
     return true;
   } catch (error) {
     console.error('Erro ao salvar culturas offline:', error);
@@ -50,9 +68,12 @@ export const saveCulturasOffline = async (
   }
 };
 
-// Função para sincronizar culturas pendentes
-export const syncPendingCulturas = async (): Promise<{success: boolean, syncedCount: number}> => {
+// Função para sincronizar culturas pendentes (modificada para suportar callbacks)
+export const syncPendingCulturas = async (callbacks?: SyncProgressCallbacks): Promise<{success: boolean, syncedCount: number}> => {
   try {
+    // Resetar estado de cancelamento
+    syncCancelled = false;
+    
     // Verificar se há conexão
     const netInfo = await NetInfo.fetch();
     if (!netInfo.isConnected) {
@@ -68,7 +89,7 @@ export const syncPendingCulturas = async (): Promise<{success: boolean, syncedCo
     }
     
     const pendingData = JSON.parse(pendingDataStr) as Record<string, PendingCulturaData>;
-    const pendingLoteIds = Object.keys(pendingData);
+    const pendingLoteIds = Object.keys(pendingData).map(id => Number(id));
     
     if (pendingLoteIds.length === 0) {
       return { success: true, syncedCount: 0 };
@@ -76,13 +97,30 @@ export const syncPendingCulturas = async (): Promise<{success: boolean, syncedCo
     
     console.log(`Sincronizando culturas de ${pendingLoteIds.length} lotes pendentes`);
     
+    // Notificar início, se houver callback
+    if (callbacks?.onStart) {
+      callbacks.onStart(pendingLoteIds.length);
+    }
+    
     // Para cada atualização pendente, enviar para a API
     let syncedCount = 0;
     const newPendingData = { ...pendingData };
     
-    for (const loteId of pendingLoteIds) {
+    for (let i = 0; i < pendingLoteIds.length; i++) {
+      // Verificar se cancelou sincronização
+      if (syncCancelled) {
+        console.log('Sincronização cancelada pelo usuário');
+        if (callbacks?.onCancel) callbacks.onCancel();
+        return { success: false, syncedCount };
+      }
+      
+      const loteId = pendingLoteIds[i];
       const update = pendingData[loteId];
+      
       try {
+        // Adicionar pequeno delay para UI conseguir atualizar
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         // Buscar dados completos do lote para incluir na atualização
         const loteResponse = await api.get(`/lotesagricolas/${loteId}`);
         const lote = loteResponse.data as Lote;
@@ -99,12 +137,16 @@ export const syncPendingCulturas = async (): Promise<{success: boolean, syncedCo
           categoria: lote.categoria || "Colono",
           situacao: lote.situacao || "Operacional",
           culturas: update.culturas
-          // Não precisa enviar deletedCultureIds pois a API substitui todas as culturas
         });
         
         // Remover do objeto de pendentes
         delete newPendingData[loteId];
         syncedCount++;
+        
+        // Notificar progresso, se houver callback
+        if (callbacks?.onProgress) {
+          callbacks.onProgress(syncedCount, pendingLoteIds.length);
+        }
       } catch (error) {
         console.error(`Erro ao sincronizar culturas do lote ${loteId}:`, error);
         // Manter na lista de pendentes para tentar novamente depois
@@ -123,7 +165,10 @@ export const syncPendingCulturas = async (): Promise<{success: boolean, syncedCo
     
     await AsyncStorage.setItem('pendingLotesStatus', JSON.stringify(pendingLotesObj));
     
-    if (syncedCount > 0) {
+    // Notificar conclusão, se houver callback
+    if (callbacks?.onComplete) {
+      callbacks.onComplete(true, syncedCount);
+    } else if (syncedCount > 0) {
       Toast.show({
         type: 'success',
         text1: 'Sincronização concluída',
@@ -135,64 +180,22 @@ export const syncPendingCulturas = async (): Promise<{success: boolean, syncedCo
     return { success: true, syncedCount };
   } catch (error) {
     console.error('Erro ao sincronizar culturas pendentes:', error);
+    
+    // Notificar erro, se houver callback
+    if (callbacks?.onComplete) {
+      callbacks.onComplete(false, 0);
+    }
+    
     return { success: false, syncedCount: 0 };
   }
 };
 
-// Função para verificar e iniciar sincronização
-export const checkAndSyncCulturas = async (): Promise<void> => {
-  try {
-    // Verificar se há conexão
-    const netInfo = await NetInfo.fetch();
-    if (!netInfo.isConnected) {
-      return;
-    }
-    
-    // Verificar timestamp de última sincronização
-    const ultimaSincronizacao = await AsyncStorage.getItem('culturas_ultima_sincronizacao');
-    if (ultimaSincronizacao) {
-      const ultimaData = new Date(ultimaSincronizacao).getTime();
-      const agora = new Date().getTime();
-      const duasHorasEmMS = 2 * 60 * 60 * 1000;
-      
-      // Se não passou o tempo mínimo, não sincroniza
-      if ((agora - ultimaData) <= duasHorasEmMS) {
-        return;
-      }
-    }
-    
-    // Verificar se há atualizações pendentes
-    const pendingDataStr = await AsyncStorage.getItem('pendingCulturasUpdates');
-    if (!pendingDataStr) {
-      return;
-    }
-    
-    const pendingData = JSON.parse(pendingDataStr);
-    const pendingCount = Object.keys(pendingData).length;
-    
-    if (pendingCount > 0) {
-      // Mostrar toast informativo discreto
-      Toast.show({
-        type: 'info',
-        text1: 'Sincronizando culturas',
-        text2: `Enviando culturas de ${pendingCount} lotes pendentes...`,
-        visibilityTime: 2000,
-      });
-      
-      // Iniciar sincronização
-      const resultado = await syncPendingCulturas();
-      
-      // Registrar timestamp de sincronização bem-sucedida
-      if (resultado.success) {
-        await AsyncStorage.setItem('culturas_ultima_sincronizacao', new Date().toISOString());
-      }
-    }
-  } catch (error) {
-    console.error('Erro ao verificar sincronização de culturas:', error);
-  }
+// Função para cancelar sincronização em andamento
+export const cancelSync = () => {
+  syncCancelled = true;
 };
 
-// Função para aplicar alterações pendentes aos lotes locais (para LotesScreen usar)
+// Aplicar alterações pendentes aos lotes locais (para LotesScreen usar)
 export const applyPendingChangesToLotes = async (lotes: Lote[]): Promise<Lote[]> => {
   try {
     const pendingDataStr = await AsyncStorage.getItem('pendingCulturasUpdates') || '{}';
@@ -231,17 +234,6 @@ export const applyPendingChangesToLotes = async (lotes: Lote[]): Promise<Lote[]>
             }
             return cultura;
           });
-          
-          // Adicionar novas culturas (que não existiam antes)
-          const existingCultureIds = lote.Culturas.map((c: Cultura) => c.id);
-          const newCultures = pendingUpdate.culturas.filter(
-            (c: CulturaFormatada) => !existingCultureIds.includes(c.culturaId) && c.isNew
-          );
-          
-          // Informação não usada diretamente, mas pode ser útil para debug
-          if (newCultures.length > 0) {
-            console.log(`Lote ${lote.id} tem ${newCultures.length} novas culturas pendentes`);
-          }
         }
         
         // Marcar como pendente de sincronização
@@ -257,5 +249,25 @@ export const applyPendingChangesToLotes = async (lotes: Lote[]): Promise<Lote[]>
   } catch (error) {
     console.error('Erro ao aplicar alterações pendentes:', error);
     return lotes; // Retorna os lotes originais em caso de erro
+  }
+};
+
+// IMPORTANTE: Função para verificar quais lotes têm culturas pendentes (para o badge)
+export const verificarLotesPendentes = async (): Promise<{[id: number]: boolean}> => {
+  try {
+    // Buscar dados pendentes do AsyncStorage
+    const pendingDataStr = await AsyncStorage.getItem('pendingCulturasUpdates') || '{}';
+    const pendingData = JSON.parse(pendingDataStr);
+    
+    // Converter as keys para números e criar mapa de lotes pendentes
+    const pendingLotes: {[id: number]: boolean} = {};
+    Object.keys(pendingData).forEach(id => {
+      pendingLotes[Number(id)] = true;
+    });
+    
+    return pendingLotes;
+  } catch (error) {
+    console.error('Erro ao verificar lotes pendentes:', error);
+    return {};
   }
 };
