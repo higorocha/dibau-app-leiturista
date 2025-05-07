@@ -23,7 +23,6 @@ import ImagePreviewView from "./ImagePreviewView";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
 import * as FileSystem from "expo-file-system";
 
-
 interface ImagemLeituraModalProps {
   isVisible: boolean;
   onClose: () => void;
@@ -191,12 +190,24 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
       // 2. Verificar conexão para upload
       const netInfo = await NetInfo.fetch();
       if (!netInfo.isConnected) {
-        Alert.alert(
-          "Sem conexão",
-          "Você está offline. A imagem foi salva localmente e será enviada quando houver conexão."
-        );
-        // Marcar como pendente de upload (implementar mecanismo)
-        onImageUploaded(faturaId);
+        // Verificar se caminhoLocal não é null antes de usá-lo
+        if (caminhoLocal) {
+          // Salvar como pendente de upload
+          await ImagemLeituraService.salvarImagemPendente(
+            leituraId,
+            faturaId,
+            caminhoLocal // Agora TypeScript não vai reclamar
+          );
+          
+          onImageUploaded(faturaId);
+        } else {
+          // Tratar o caso em que salvarImagemLocal falhou
+          Alert.alert(
+            "Erro",
+            "Não foi possível salvar a imagem localmente."
+          );
+        }
+        
         setCapturedImage(null);
         setShowPreview(false);
         onClose();
