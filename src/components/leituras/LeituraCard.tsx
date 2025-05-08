@@ -9,13 +9,13 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { formatarNumeroComMilhar, formatMesAno } from "@/src/utils/formatters";
-import Toast from "react-native-toast-message"; // Adicione esta linha
+import Toast from "react-native-toast-message";
 
 // Verificar se é tablet
 const { width } = Dimensions.get("window");
 const isTablet = width > 600;
 
-// Interface para as propriedades do componente
+// Interface para as propriedades do componente - Adicionando props corretamente
 interface LeituraCardProps {
   mesAno: string;
   leiturasInformadas: number;
@@ -26,8 +26,10 @@ interface LeituraCardProps {
   onPress: () => void;
   isEmpty?: boolean;
   isAllFechada: boolean;
-  temDadosPendentes?: boolean; // Nova prop para indicar dados pendentes
-  onSincronizar?: () => void;  // Função para sincronizar
+  temDadosPendentes?: boolean;
+  onSincronizar?: () => void;
+  volumePositivo?: number; // Nova prop
+  temConsumosNegativos?: boolean; // Nova prop
 }
 
 const LeituraCard: React.FC<LeituraCardProps> = ({
@@ -42,7 +44,12 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
   isAllFechada,
   temDadosPendentes = false,
   onSincronizar,
+  volumePositivo, // Desestruturar corretamente
+  temConsumosNegativos = false, // Valor padrão
 }) => {
+  // Usar volumePositivo recebido via props ou fallback para volumeTotal
+  const volumeFinal = volumePositivo !== undefined ? volumePositivo : volumeTotal;
+
   // Verificar se é um card vazio
   if (isEmpty) {
     return (
@@ -70,6 +77,13 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
       onPress={onPress}
       activeOpacity={0.7}
     >
+      {/* Badge de Alertas */}
+      {temConsumosNegativos && (
+        <View style={styles.alertBadge}>
+          <Text style={styles.alertBadgeText}>Consumos Negativos</Text>
+        </View>
+      )}
+      
       <View style={styles.cardHeader}>
         <Text style={styles.title}>Leituras {formatMesAno(mesAno)}</Text>
         <Text style={styles.subtitle}>Criado em: {dataFormatada}</Text>
@@ -138,10 +152,21 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
           </View>
           <Text style={styles.statLabel}>Volume Total (m³)</Text>
           <Text style={styles.statValue}>
-            {formatarNumeroComMilhar(volumeTotal)}
+            {formatarNumeroComMilhar(volumeFinal)}
           </Text>
         </View>
       </View>
+      
+      {/* Alerta de consumos negativos */}
+      {temConsumosNegativos && (
+        <View style={styles.alertContainer}>
+          <Ionicons name="warning-outline" size={16} color="#faad14" style={{marginRight: 8}} />
+          <Text style={styles.alertText}>
+            Existem consumos negativos que foram desconsiderados no cálculo.
+            Volume com negativos: {formatarNumeroComMilhar(volumeTotal)} m³
+          </Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 };
@@ -157,6 +182,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 3,
+    position: "relative", // Para posicionar o badge corretamente
   },
   emptyCard: {
     backgroundColor: "white",
@@ -229,20 +255,15 @@ const styles = StyleSheet.create({
     marginTop: 6,
     textAlign: "center",
   },
-  headerSubtitleContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  lockIcon: {
-    marginLeft: 8,
-  },
   statValueContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
   },
-  // Novos estilos para o badge de sincronização
+  lockIcon: {
+    marginLeft: 8,
+  },
   syncBadge: {
     position: 'absolute',
     right: 0,
@@ -264,6 +285,40 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  
+  // Novos estilos para os alertas de consumos negativos
+  alertBadge: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    backgroundColor: '#faad14',
+    borderTopLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    zIndex: 10,
+  },
+  alertBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  alertContainer: {
+    marginTop: 16,
+    marginHorizontal: 12,
+    padding: 10,
+    backgroundColor: '#fffbe6',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#ffe58f',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  alertText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#815500',
   },
 });
 

@@ -103,118 +103,128 @@ const LeiturasScreen: React.FC = () => {
   const verificarDadosPendentes = useCallback(async () => {
     try {
       console.log("[DEBUG] Iniciando verificação de dados pendentes");
-      
+
       // Verificar todos os tipos de dados pendentes
-      const [pendingSyncsStr, pendingUpdatesStr, pendingImagesStr] = await Promise.all([
-        AsyncStorage.getItem("pendingLeiturasSyncs"),
-        AsyncStorage.getItem("pendingLeituraUpdates"),
-        AsyncStorage.getItem("pendingImagesUploads")
-      ]);
-  
+      const [pendingSyncsStr, pendingUpdatesStr, pendingImagesStr] =
+        await Promise.all([
+          AsyncStorage.getItem("pendingLeiturasSyncs"),
+          AsyncStorage.getItem("pendingLeituraUpdates"),
+          AsyncStorage.getItem("pendingImagesUploads"),
+        ]);
+
       // 1. Processamento de leituras pendentes
       let leiturasIds: string[] = [];
-      
+
       // Verificar pendingSyncs (faturas marcadas explicitamente como pendentes)
       if (pendingSyncsStr) {
         const pendingSyncs = JSON.parse(pendingSyncsStr);
         leiturasIds = Object.keys(pendingSyncs);
-        console.log(`[DEBUG] Leituras marcadas como pendentes: ${leiturasIds.length}`);
+        console.log(
+          `[DEBUG] Leituras marcadas como pendentes: ${leiturasIds.length}`
+        );
       }
-      
+
       // Verificar pendingUpdates (dados de leituras editados offline)
       if (pendingUpdatesStr) {
         const pendingUpdates = JSON.parse(pendingUpdatesStr);
         const updateIds = Object.keys(pendingUpdates);
-        
+
         // Adicionar IDs que ainda não estão na lista
         updateIds.forEach((id) => {
           if (!leiturasIds.includes(id)) {
             leiturasIds.push(id);
           }
         });
-        console.log(`[DEBUG] Total leituras pendentes com updates: ${leiturasIds.length}`);
+        console.log(
+          `[DEBUG] Total leituras pendentes com updates: ${leiturasIds.length}`
+        );
       }
-      
+
       // 2. Processamento de imagens pendentes
       let imagesFaturaIds: number[] = [];
-      
+
       if (pendingImagesStr) {
         try {
           const pendingImages = JSON.parse(pendingImagesStr);
-          
+
           // Extrair IDs de faturas associadas às imagens pendentes
           Object.values(pendingImages).forEach((item: any) => {
-            if (item && typeof item.faturaId === 'number') {
+            if (item && typeof item.faturaId === "number") {
               imagesFaturaIds.push(item.faturaId);
             }
           });
-          
-          console.log(`[DEBUG] Faturas com imagens pendentes: ${imagesFaturaIds.length}`);
+
+          console.log(
+            `[DEBUG] Faturas com imagens pendentes: ${imagesFaturaIds.length}`
+          );
         } catch (err) {
           console.error("[ERROR] Erro ao processar imagens pendentes:", err);
         }
       }
-  
+
       // Se não há pendências de nenhum tipo, limpar e retornar
       if (leiturasIds.length === 0 && imagesFaturaIds.length === 0) {
         console.log("[DEBUG] Nenhuma pendência encontrada");
         setMesesComDadosPendentes({});
         return;
       }
-  
+
       // 3. Mapeamento dos meses com pendências
       const mesesPendentes: { [key: string]: boolean } = {};
       const mesesProcessados = new Set<string>();
-  
+
       // Para cada leitura mensal
       leituras.forEach((leitura) => {
         // Evitar processamento duplicado
         if (mesesProcessados.has(leitura.mesAno)) return;
-        
+
         let temPendencia = false;
-        
+
         // Verificar leituras pendentes
         if (leiturasIds.length > 0) {
-          const temLeituraPendente = leitura.faturas.some((fatura) => 
+          const temLeituraPendente = leitura.faturas.some((fatura) =>
             leiturasIds.includes(String(fatura.id))
           );
-          
+
           if (temLeituraPendente) {
             temPendencia = true;
             console.log(`[DEBUG] Mês ${leitura.mesAno} tem leituras pendentes`);
           }
         }
-        
+
         // Verificar imagens pendentes
         if (!temPendencia && imagesFaturaIds.length > 0) {
-          const temImagemPendente = leitura.faturas.some((fatura) => 
+          const temImagemPendente = leitura.faturas.some((fatura) =>
             imagesFaturaIds.includes(fatura.id)
           );
-          
+
           if (temImagemPendente) {
             temPendencia = true;
             console.log(`[DEBUG] Mês ${leitura.mesAno} tem imagens pendentes`);
           }
         }
-        
+
         // Se este mês tem pendências, marcar e registrar
         if (temPendencia) {
           mesesPendentes[leitura.mesAno] = true;
           mesesProcessados.add(leitura.mesAno);
         }
       });
-  
+
       // Log dos meses com pendências
       const mesesPendentesKeys = Object.keys(mesesPendentes);
       if (mesesPendentesKeys.length > 0) {
-        console.log(`[DEBUG] Meses com pendências: ${mesesPendentesKeys.join(", ")}`);
+        console.log(
+          `[DEBUG] Meses com pendências: ${mesesPendentesKeys.join(", ")}`
+        );
       } else {
-        console.log("[DEBUG] Nenhum mês com pendências encontrado (verificação de meses inconsistente)");
+        console.log(
+          "[DEBUG] Nenhum mês com pendências encontrado (verificação de meses inconsistente)"
+        );
       }
-      
+
       // Atualizar o estado
       setMesesComDadosPendentes(mesesPendentes);
-      
     } catch (error) {
       console.error("[ERROR] Erro ao verificar dados pendentes:", error);
     }
@@ -238,51 +248,64 @@ const LeiturasScreen: React.FC = () => {
         });
         return;
       }
-  
+
       // Encontrar a leitura correspondente a este mês
       const leitura = leituras.find((l) => l.mesAno === mesAno);
       if (!leitura) return;
-  
+
       // Preparar o modal de progresso
       setSyncProgress(0);
       setSyncItemsProcessed(0);
       setSyncTotalItems(0);
-      setSyncMessage(`Verificando dados pendentes de ${formatMesAno(mesAno)}...`);
-      
+      setSyncMessage(
+        `Verificando dados pendentes de ${formatMesAno(mesAno)}...`
+      );
+
       // Resetar progresso de imagens
       setImgSyncProgress(0);
       setImgSyncItemsProcessed(0);
       setImgSyncTotalItems(0);
-      setImgSyncMessage('');
-      
+      setImgSyncMessage("");
+
       setSyncModalVisible(true);
-  
+
       // Verificar se temos imagens pendentes para este mês
-      const imagensPendentes = await ImagemLeituraService.verificarImagensPendentes(leitura.faturas);
+      const imagensPendentes =
+        await ImagemLeituraService.verificarImagensPendentes(leitura.faturas);
       const totalImagensPendentes = Object.keys(imagensPendentes).length;
-      
+
       // Verificar se temos leituras pendentes para este mês
-      const pendingLeiturasStr = await AsyncStorage.getItem('pendingLeituraUpdates');
-      const pendingLeituras = pendingLeiturasStr ? JSON.parse(pendingLeiturasStr) : {};
-      
+      const pendingLeiturasStr = await AsyncStorage.getItem(
+        "pendingLeituraUpdates"
+      );
+      const pendingLeituras = pendingLeiturasStr
+        ? JSON.parse(pendingLeiturasStr)
+        : {};
+
       // Filtrar apenas leituras deste mês
       const leiturasDesteMes = leitura.faturas
-        .map(f => String(f.id))
-        .filter(id => pendingLeituras[id]);
-      
+        .map((f) => String(f.id))
+        .filter((id) => pendingLeituras[id]);
+
       const temLeiturasParaSincronizar = leiturasDesteMes.length > 0;
-      
-      console.log(`[DEBUG] Mês ${mesAno}: ${leiturasDesteMes.length} leituras pendentes, ${totalImagensPendentes} imagens pendentes`);
-      
+
+      console.log(
+        `[DEBUG] Mês ${mesAno}: ${leiturasDesteMes.length} leituras pendentes, ${totalImagensPendentes} imagens pendentes`
+      );
+
       // Executar sincronizações apropriadas
       let leiturasSincronizadas = 0;
       let imagensSincronizadas = 0;
-      
+
       // 1. Sincronizar leituras, se houver
       if (temLeiturasParaSincronizar) {
-        setSyncMessage(`Sincronizando ${leiturasDesteMes.length} leituras de ${formatMesAno(mesAno)}...`);
+        setSyncMessage(
+          `Sincronizando ${leiturasDesteMes.length} leituras de ${formatMesAno(
+            mesAno
+          )}...`
+        );
         setSyncTotalItems(leiturasDesteMes.length);
-        
+
         const resultadoLeituras = await syncPendingLeituras({
           onStart: (total: number) => {
             console.log(`[DEBUG] Iniciando sincronização de ${total} leituras`);
@@ -291,75 +314,94 @@ const LeiturasScreen: React.FC = () => {
             const percentComplete = (processed / total) * 100;
             setSyncProgress(percentComplete);
             setSyncItemsProcessed(processed);
-            setSyncMessage(`Sincronizando leitura ${processed} de ${total} para ${formatMesAno(mesAno)}...`);
+            setSyncMessage(
+              `Sincronizando leitura ${processed} de ${total} para ${formatMesAno(
+                mesAno
+              )}...`
+            );
           },
           onComplete: (success: boolean, syncedCount: number) => {
             if (success) {
               setSyncProgress(100);
               leiturasSincronizadas = syncedCount;
-              console.log(`[DEBUG] ${syncedCount} leituras sincronizadas com sucesso`);
+              console.log(
+                `[DEBUG] ${syncedCount} leituras sincronizadas com sucesso`
+              );
             }
           },
           onCancel: () => {
-            console.log('[DEBUG] Sincronização de leituras cancelada pelo usuário');
+            console.log(
+              "[DEBUG] Sincronização de leituras cancelada pelo usuário"
+            );
             setSyncModalVisible(false);
             return;
-          }
+          },
         });
       } else {
         // Se não há leituras, marcar como concluído
         setSyncProgress(100);
         setSyncMessage("Nenhuma leitura pendente encontrada");
       }
-      
+
       // 2. Sincronizar imagens, se houver
       if (totalImagensPendentes > 0) {
-        setImgSyncMessage(`Preparando para enviar ${totalImagensPendentes} imagens...`);
+        setImgSyncMessage(
+          `Preparando para enviar ${totalImagensPendentes} imagens...`
+        );
         setImgSyncTotalItems(totalImagensPendentes);
-        
+
         try {
-          const resultadoImagens = await ImagemLeituraService.uploadImagensPendentes({
-            onStart: (total: number) => {
-              console.log(`[DEBUG] Iniciando upload de ${total} imagens`);
-              setImgSyncMessage(`Enviando ${total} imagens pendentes...`);
-            },
-            onProgress: (processed: number, total: number) => {
-              console.log(`[DEBUG] Progresso de imagens: ${processed}/${total}`);
-              const percent = (processed / total) * 100;
-              setImgSyncProgress(percent);
-              setImgSyncItemsProcessed(processed);
-              setImgSyncMessage(`Enviando imagem ${processed} de ${total}...`);
-            },
-            onComplete: (success: boolean, uploadedCount: number) => {
-              console.log(`[DEBUG] Upload de imagens: success=${success}, uploadedCount=${uploadedCount}`);
-              setImgSyncProgress(100);
-              imagensSincronizadas = uploadedCount;
-              
-              if (success && uploadedCount > 0) {
-                setImgSyncMessage(`Upload de ${uploadedCount} imagens concluído!`);
-              } else if (!success) {
-                setImgSyncMessage('Ocorreu um erro ao enviar imagens');
-              } else {
-                setImgSyncMessage('Nenhuma imagem necessária envio');
-              }
-            },
-            checkCancelled: () => false,
-          });
+          const resultadoImagens =
+            await ImagemLeituraService.uploadImagensPendentes({
+              onStart: (total: number) => {
+                console.log(`[DEBUG] Iniciando upload de ${total} imagens`);
+                setImgSyncMessage(`Enviando ${total} imagens pendentes...`);
+              },
+              onProgress: (processed: number, total: number) => {
+                console.log(
+                  `[DEBUG] Progresso de imagens: ${processed}/${total}`
+                );
+                const percent = (processed / total) * 100;
+                setImgSyncProgress(percent);
+                setImgSyncItemsProcessed(processed);
+                setImgSyncMessage(
+                  `Enviando imagem ${processed} de ${total}...`
+                );
+              },
+              onComplete: (success: boolean, uploadedCount: number) => {
+                console.log(
+                  `[DEBUG] Upload de imagens: success=${success}, uploadedCount=${uploadedCount}`
+                );
+                setImgSyncProgress(100);
+                imagensSincronizadas = uploadedCount;
+
+                if (success && uploadedCount > 0) {
+                  setImgSyncMessage(
+                    `Upload de ${uploadedCount} imagens concluído!`
+                  );
+                } else if (!success) {
+                  setImgSyncMessage("Ocorreu um erro ao enviar imagens");
+                } else {
+                  setImgSyncMessage("Nenhuma imagem necessária envio");
+                }
+              },
+              checkCancelled: () => false,
+            });
         } catch (error) {
-          console.error('[DEBUG] Erro ao sincronizar imagens:', error);
+          console.error("[DEBUG] Erro ao sincronizar imagens:", error);
           setImgSyncProgress(100);
-          setImgSyncMessage('Erro ao sincronizar imagens');
+          setImgSyncMessage("Erro ao sincronizar imagens");
         }
       } else {
         // Se não há imagens, marcar como concluído
         setImgSyncProgress(100);
         setImgSyncMessage("Nenhuma imagem pendente encontrada");
       }
-      
+
       // 3. Finalizar o processo
       setTimeout(() => {
         setSyncModalVisible(false);
-        
+
         // Mensagem de sucesso baseada no que foi sincronizado
         const mensagemToast = () => {
           if (leiturasSincronizadas > 0 && imagensSincronizadas > 0) {
@@ -388,7 +430,7 @@ const LeiturasScreen: React.FC = () => {
             };
           }
         };
-        
+
         // Mostrar toast com resultado
         const msg = mensagemToast();
         Toast.show({
@@ -396,16 +438,15 @@ const LeiturasScreen: React.FC = () => {
           position: "bottom",
           visibilityTime: 3000,
         });
-        
+
         // Atualizar a lista de meses com pendências
         verificarDadosPendentes();
-        
+
         // Recarregar dados se algo foi sincronizado
         if (leiturasSincronizadas > 0 || imagensSincronizadas > 0) {
           carregarLeituras(true);
         }
       }, 1500);
-      
     } catch (error) {
       console.error("[ERROR] Erro ao sincronizar mês:", error);
       setSyncModalVisible(false);
@@ -446,6 +487,24 @@ const LeiturasScreen: React.FC = () => {
       console.error("Erro ao carregar dados offline:", error);
       setError("Erro ao carregar dados salvos");
     }
+  };
+
+  const calcularVolumePositivo = (faturas: any[]) => {
+    if (!faturas || !faturas.length) return 0;
+
+    return faturas.reduce((sum, fatura) => {
+      const volume = parseFloat(fatura.valor_leitura_m3) || 0;
+      return sum + (volume > 0 ? volume : 0);
+    }, 0);
+  };
+
+  const verificarConsumosNegativos = (faturas: any[]) => {
+    if (!faturas || !faturas.length) return false;
+
+    return faturas.some((fatura) => {
+      const volume = parseFloat(fatura.valor_leitura_m3) || 0;
+      return volume < 0;
+    });
   };
 
   const limparImagensFaturasFechadas = async (leituras: LeituraMensal[]) => {
@@ -1117,6 +1176,8 @@ const LeiturasScreen: React.FC = () => {
               isAllFechada={item.isAllFechada}
               temDadosPendentes={mesesComDadosPendentes[item.mesAno] || false}
               onSincronizar={() => sincronizarMes(item.mesAno)}
+              volumePositivo={calcularVolumePositivo(item.faturas)}
+              temConsumosNegativos={verificarConsumosNegativos(item.faturas)}
             />
           )}
           onEndReached={leituras.length > 0 ? loadMore : undefined}

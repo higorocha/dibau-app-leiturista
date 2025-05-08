@@ -33,7 +33,7 @@ import DatePicker from "react-native-date-picker";
 // Após as outras importações
 import ImagemLeituraModal from "../../components/leituras/ImagemLeituraModal";
 import ImagemLeituraService from "../../services/ImagemLeituraService";
-const FATURAS_STORAGE_KEY = 'leituras_faturas_selecionadas';
+const FATURAS_STORAGE_KEY = "leituras_faturas_selecionadas";
 
 // Interface para Fatura
 interface Fatura {
@@ -69,7 +69,7 @@ interface Fatura {
 type OrdenacaoTipo = "original" | "leitura";
 
 // Tipos de filtro
-type FiltroTipo = "todos" | "lidos" | "naoLidos";
+type FiltroTipo = "todos" | "lidos" | "naoLidos" | "negativos";
 
 // Interface para props do FaturaItem
 interface FaturaItemProps {
@@ -219,13 +219,14 @@ const FaturaItem = memo<FaturaItemProps>(
             </Text>
             {isEditing ? (
               <View>
-                <MaskedNumberInput
+                <TextInput
                   style={styles.input}
                   value={leituraAtuais[item.id]}
                   onChangeText={(text: string) =>
                     setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
                   }
                   placeholder="Informe a leitura"
+                  keyboardType="numeric"
                 />
                 {item.Hidrometro.x10 && (
                   <View
@@ -545,60 +546,70 @@ const LeiturasDetalhesScreen: React.FC = () => {
         console.log("[DEBUG] Carregando dados mais recentes do AsyncStorage");
         // Carregar as faturas do AsyncStorage
         const faturasStorage = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
-        
+
         if (faturasStorage) {
           const faturasArmazenadas = JSON.parse(faturasStorage) as Fatura[];
-          
+
           // Verificar se são faturas válidas
           if (faturasArmazenadas && faturasArmazenadas.length > 0) {
-            console.log(`[DEBUG] Faturas carregadas do AsyncStorage: ${faturasArmazenadas.length}`);
-            
+            console.log(
+              `[DEBUG] Faturas carregadas do AsyncStorage: ${faturasArmazenadas.length}`
+            );
+
             // PASSO CRUCIAL: Atualizar imediatamente faturasSelecionadas com os dados do AsyncStorage
             // Isso sobrescreve qualquer dado que possa ter vindo do contexto
             setFaturasSelecionadas(faturasArmazenadas);
-            
+
             // Inicializar os estados com os valores das faturas armazenadas
             const leiturasAtuaisTmp: { [key: number]: string } = {};
             const datasLeiturasTmp: { [key: number]: Date } = {};
             const leiturasEditadasTmp: { [key: number]: boolean } = {};
-            
+
             faturasArmazenadas.forEach((fatura: Fatura) => {
               if (fatura.Leitura) {
                 // Guardar leitura como string para o input
-                leiturasAtuaisTmp[fatura.id] = fatura.Leitura.leitura?.toString() || '';
-                
+                leiturasAtuaisTmp[fatura.id] =
+                  fatura.Leitura.leitura?.toString() || "";
+
                 // Guardar data da leitura
                 if (fatura.Leitura.data_leitura) {
                   try {
-                    datasLeiturasTmp[fatura.id] = new Date(fatura.Leitura.data_leitura);
+                    datasLeiturasTmp[fatura.id] = new Date(
+                      fatura.Leitura.data_leitura
+                    );
                   } catch (e) {
                     // Fallback para data atual se houver erro
                     datasLeiturasTmp[fatura.id] = new Date();
                   }
                 }
-                
+
                 // Marcar como editada se tiver valor
                 if (fatura.Leitura.leitura && fatura.Leitura.leitura > 0) {
                   leiturasEditadasTmp[fatura.id] = true;
                 }
               }
             });
-            
+
             // Atualizar os estados locais
             setLeituraAtuais(leiturasAtuaisTmp);
             setDataLeituraAtuais(datasLeiturasTmp);
             setLeiturasSalvas(leiturasEditadasTmp);
-            
-            console.log(`[DEBUG] Estados locais atualizados com dados do AsyncStorage`);
+
+            console.log(
+              `[DEBUG] Estados locais atualizados com dados do AsyncStorage`
+            );
           }
         }
       } catch (error) {
-        console.error("[ERROR] Erro ao carregar faturas do AsyncStorage:", error);
+        console.error(
+          "[ERROR] Erro ao carregar faturas do AsyncStorage:",
+          error
+        );
       }
     };
-    
+
     carregarFaturasEditadas();
-  }, []);  // Sem dependências para executar apenas uma vez
+  }, []); // Sem dependências para executar apenas uma vez
 
   // Animação do painel de filtros
   useEffect(() => {
@@ -710,6 +721,11 @@ const LeiturasDetalhesScreen: React.FC = () => {
         resultado = resultado.filter(
           (fatura) => statusLeituras[fatura.id] !== true
         );
+      } else if (filtroAtual === "negativos") {
+        // Novo caso para filtro de valores negativos
+        resultado = resultado.filter(
+          (fatura) => fatura.valor_leitura_m3 < 0
+        );
       }
 
       // Aplicar ordenação
@@ -780,6 +796,11 @@ const LeiturasDetalhesScreen: React.FC = () => {
       setValoresOriginais((prev) => ({
         ...prev,
         [faturaId]: fatura.Leitura?.leitura.toString() || "",
+      }));
+
+      setLeituraAtuais((prev) => ({
+        ...prev,
+        [faturaId]: ""
       }));
 
       // Sempre atualizar a data apenas para a fatura que está sendo editada
@@ -869,21 +890,21 @@ const LeiturasDetalhesScreen: React.FC = () => {
       Alert.alert("Erro", "Por favor, informe a leitura atual.");
       return;
     }
-  
+
     // Processamento do valor da leitura
     let leituraAtualNum = parseFloat(
       leituraAtual.replace(/\./g, "").replace(",", ".")
     );
-    
+
     // Verificar flag x10 do hidrômetro
     const multiplicarPor10 = fatura.Hidrometro.x10 === true;
-    
+
     // Comparação com a leitura anterior (na mesma base)
     const leituraAnterior = fatura.leitura_anterior || 0;
     const leituraAtualParaComparacao = multiplicarPor10
       ? leituraAtualNum * 10
       : leituraAtualNum;
-  
+
     // Alerta se a leitura atual for menor que a anterior
     if (leituraAtualParaComparacao < leituraAnterior) {
       const confirmaZerado = await new Promise<boolean>((resolve) => {
@@ -896,22 +917,22 @@ const LeiturasDetalhesScreen: React.FC = () => {
           ]
         );
       });
-  
+
       if (!confirmaZerado) return;
     }
-  
+
     // Aplicar multiplicador x10 se necessário
     if (multiplicarPor10) {
       leituraAtualNum = leituraAtualNum * 10;
       console.log(`[LEITURA] Multiplicando valor por 10: ${leituraAtualNum}`);
     }
-  
+
     // Indicador de salvamento
     setSalvando((prev) => ({
       ...prev,
       [fatura.id]: true,
     }));
-  
+
     try {
       // 2. PREPARAÇÃO DOS DADOS
       // Formatar a data para envio
@@ -919,11 +940,11 @@ const LeiturasDetalhesScreen: React.FC = () => {
       const dataFormatada = `${dataLocal.getFullYear()}-${String(
         dataLocal.getMonth() + 1
       ).padStart(2, "0")}-${String(dataLocal.getDate()).padStart(2, "0")}`;
-  
+
       // Verificar conexão
       const netInfo = await NetInfo.fetch();
       const isConnected = netInfo.isConnected;
-  
+
       // Criar objeto com os dados atualizados
       const dadosAtualizados = {
         valor_leitura_m3: leituraAtualNum,
@@ -933,25 +954,25 @@ const LeiturasDetalhesScreen: React.FC = () => {
           data_leitura: dataFormatada,
         },
       };
-  
+
       // 3. ATUALIZAÇÃO DOS ESTADOS LOCAIS (Para ambos modos: online e offline)
       // Marcar como lido/editado no estado local
       setLeiturasSalvas((prev) => ({
         ...prev,
         [fatura.id]: true,
       }));
-      
+
       // Guardar no AsyncStorage via contexto
       await atualizarFaturaLocal(fatura.id, dadosAtualizados);
-      
+
       // NOVA ADIÇÃO: Atualizar imediatamente os valores visíveis na interface
-      setLeituraAtuais(prev => ({
+      setLeituraAtuais((prev) => ({
         ...prev,
-        [fatura.id]: leituraAtualNum.toString()
+        [fatura.id]: leituraAtualNum.toString(),
       }));
-      
+
       // Também atualizar o objeto faturasSelecionadas para a UI
-      const faturasAtualizadasUI = faturasSelecionadas.map(f => {
+      const faturasAtualizadasUI = faturasSelecionadas.map((f) => {
         if (f.id === fatura.id) {
           return {
             ...f,
@@ -960,17 +981,19 @@ const LeiturasDetalhesScreen: React.FC = () => {
               ...(f.Leitura || {}),
               leitura: leituraAtualNum,
               data_leitura: dataFormatada,
-            }
+            },
           };
         }
         return f;
       });
-      
+
       // Atualizar explicitamente o estado local do componente
       setFaturasSelecionadas(faturasAtualizadasUI);
-      
-      console.log(`[DEBUG] Fatura ${fatura.id} salva localmente, valor: ${leituraAtualNum}`);
-  
+
+      console.log(
+        `[DEBUG] Fatura ${fatura.id} salva localmente, valor: ${leituraAtualNum}`
+      );
+
       // 4. PROCESSAMENTO BASEADO NO MODO (ONLINE OU OFFLINE)
       if (isConnected) {
         // === MODO ONLINE: Enviar para o servidor ===
@@ -982,20 +1005,20 @@ const LeiturasDetalhesScreen: React.FC = () => {
               data_leitura: dataFormatada,
             }
           );
-  
+
           if (response.status === 200) {
             // Remover da lista de pendentes se existir
             if (pendingSyncs[fatura.id]) {
               const updatedPending = { ...pendingSyncs };
               delete updatedPending[fatura.id];
               setPendingSyncs(updatedPending);
-  
+
               // Atualizar AsyncStorage de pendências
               await AsyncStorage.setItem(
                 "pendingLeiturasSyncs",
                 JSON.stringify(updatedPending)
               );
-  
+
               // Remover dos dados de sincronização pendentes
               const pendingDataStr =
                 (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
@@ -1008,7 +1031,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
                 );
               }
             }
-  
+
             // Notificar usuário do sucesso
             Toast.show({
               type: "success",
@@ -1019,23 +1042,32 @@ const LeiturasDetalhesScreen: React.FC = () => {
           }
         } catch (apiError) {
           console.error("[ERROR] Erro ao enviar para o servidor:", apiError);
-          
+
           // Mesmo com erro na API, mantemos os dados salvos localmente
           // e adicionamos à lista de pendentes para sincronização posterior
-          await salvarParaSincronizacaoPosterior(fatura.id, leituraAtualNum, dataFormatada);
-          
+          await salvarParaSincronizacaoPosterior(
+            fatura.id,
+            leituraAtualNum,
+            dataFormatada
+          );
+
           Toast.show({
             type: "warning",
             text1: "Erro ao comunicar com servidor",
-            text2: "Dados salvos localmente e serão sincronizados posteriormente",
+            text2:
+              "Dados salvos localmente e serão sincronizados posteriormente",
             position: "bottom",
             visibilityTime: 3000,
           });
         }
       } else {
         // === MODO OFFLINE: Salvar para sincronização posterior ===
-        await salvarParaSincronizacaoPosterior(fatura.id, leituraAtualNum, dataFormatada);
-        
+        await salvarParaSincronizacaoPosterior(
+          fatura.id,
+          leituraAtualNum,
+          dataFormatada
+        );
+
         Toast.show({
           type: "info",
           text1: "Leitura salva localmente",
@@ -1044,11 +1076,11 @@ const LeiturasDetalhesScreen: React.FC = () => {
           visibilityTime: 2000,
         });
       }
-  
+
       // 5. FINALIZAÇÃO
       // Sair do modo de edição
       setEditingId(null);
-      
+
       // Reaplicar filtro e ordenação
       aplicarFiltroEOrdenacao(
         faturasAtualizadasUI, // Usar a versão atualizada das faturas
@@ -1057,12 +1089,12 @@ const LeiturasDetalhesScreen: React.FC = () => {
         searchText,
         { ...leiturasSalvas, [fatura.id]: true }
       );
-      
     } catch (error: any) {
       console.error("[ERROR] Erro geral ao salvar leitura:", error);
       Alert.alert(
         "Erro",
-        error.response?.data?.error || "Erro ao salvar a leitura. Tente novamente."
+        error.response?.data?.error ||
+          "Erro ao salvar a leitura. Tente novamente."
       );
     } finally {
       // Desativar indicador de salvamento
@@ -1072,18 +1104,19 @@ const LeiturasDetalhesScreen: React.FC = () => {
       }));
     }
   };
-  
+
   // Função auxiliar para salvar dados para sincronização posterior
   const salvarParaSincronizacaoPosterior = async (
-    faturaId: number, 
+    faturaId: number,
     leitura: number,
     dataLeitura: string
   ) => {
     try {
       // Buscar atualizações pendentes existentes
-      const pendingDataStr = (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
+      const pendingDataStr =
+        (await AsyncStorage.getItem("pendingLeituraUpdates")) || "{}";
       const pendingData = JSON.parse(pendingDataStr);
-      
+
       // Adicionar/atualizar esta leitura
       pendingData[faturaId] = {
         id: faturaId,
@@ -1091,19 +1124,30 @@ const LeiturasDetalhesScreen: React.FC = () => {
         data_leitura: dataLeitura,
         updatedAt: new Date().toISOString(),
       };
-      
+
       // Salvar no AsyncStorage
-      await AsyncStorage.setItem("pendingLeituraUpdates", JSON.stringify(pendingData));
-      
+      await AsyncStorage.setItem(
+        "pendingLeituraUpdates",
+        JSON.stringify(pendingData)
+      );
+
       // Atualizar status de pendência
       const updatedPending = { ...pendingSyncs, [faturaId]: true };
       setPendingSyncs(updatedPending);
-      await AsyncStorage.setItem("pendingLeiturasSyncs", JSON.stringify(updatedPending));
-      
-      console.log(`[DEBUG] Leitura ${faturaId} marcada para sincronização posterior`);
+      await AsyncStorage.setItem(
+        "pendingLeiturasSyncs",
+        JSON.stringify(updatedPending)
+      );
+
+      console.log(
+        `[DEBUG] Leitura ${faturaId} marcada para sincronização posterior`
+      );
       return true;
     } catch (error) {
-      console.error("[ERROR] Erro ao salvar para sincronização posterior:", error);
+      console.error(
+        "[ERROR] Erro ao salvar para sincronização posterior:",
+        error
+      );
       return false;
     }
   };
@@ -1157,7 +1201,6 @@ const LeiturasDetalhesScreen: React.FC = () => {
                 Não Lidos
               </Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={[
                 styles.filterChip,
@@ -1172,6 +1215,23 @@ const LeiturasDetalhesScreen: React.FC = () => {
                 ]}
               >
                 Lidos
+              </Text>
+            </TouchableOpacity>
+            {/* Novo botão de filtro para consumos negativos */}
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                filtro === "negativos" && styles.filterChipActive,
+              ]}
+              onPress={() => setFiltro("negativos")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filtro === "negativos" && styles.filterChipTextActive,
+                ]}
+              >
+                Consumo Negativo
               </Text>
             </TouchableOpacity>
           </View>
@@ -1404,7 +1464,11 @@ const LeiturasDetalhesScreen: React.FC = () => {
                   ? "Nenhuma leitura encontrada para essa busca"
                   : filtro !== "todos"
                   ? `Nenhuma leitura "${
-                      filtro === "lidos" ? "lida" : "não lida"
+                      filtro === "lidos"
+                        ? "lida"
+                        : filtro === "naoLidos"
+                        ? "não lida"
+                        : "com consumo negativo"
                     }" disponível`
                   : "Nenhuma leitura disponível"}
               </Text>
