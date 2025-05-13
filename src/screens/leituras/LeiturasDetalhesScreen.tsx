@@ -30,9 +30,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import Toast from "react-native-toast-message";
 import DatePicker from "react-native-date-picker";
-// Após as outras importações
 import ImagemLeituraModal from "../../components/leituras/ImagemLeituraModal";
 import ImagemLeituraService from "../../services/ImagemLeituraService";
+import HighPerformanceInput, { HighPerformanceInputRef } from "@/src/components/inputs/HighPerformanceInput";
+
 const FATURAS_STORAGE_KEY = "leituras_faturas_selecionadas";
 
 // Interface para Fatura
@@ -77,7 +78,7 @@ interface FaturaItemProps {
   index: number;
   isTablet: boolean;
   handleEdit: (faturaId: number) => void;
-  handleSave: (fatura: Fatura) => Promise<void>;
+  handleSave: (fatura: Fatura, leituraValor: string) => Promise<void>;
   handleCancel: () => void;
   editingId: number | null;
   leituraAtuais: { [key: number]: string };
@@ -134,9 +135,9 @@ const FaturaItem = memo<FaturaItemProps>(
     const isDisabled = item.fechada === "Sim";
     const hasPendingSync = pendingSyncs[item.id];
     const foiEditada = leiturasSalvas[item.id];
-
-    // Layout de 2 colunas - determinar se é coluna da esquerda ou direita
     const isLeftColumn = index % 2 === 0;
+    const inputRef = useRef<HighPerformanceInputRef>(null);
+
 
     return (
       <View
@@ -218,27 +219,26 @@ const FaturaItem = memo<FaturaItemProps>(
               Leitura Atual
             </Text>
             {isEditing ? (
-              <View>
-                <TextInput
-                  style={styles.input}
-                  value={leituraAtuais[item.id]}
-                  onChangeText={(text: string) =>
-                    setLeituraAtuais((prev) => ({ ...prev, [item.id]: text }))
-                  }
-                  placeholder="Informe a leitura"
-                  keyboardType="numeric"
-                />
-                {item.Hidrometro.x10 && (
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginTop: 4,
-                    }}
-                  ></View>
-                )}
-              </View>
-            ) : (
+  <View>
+    <HighPerformanceInput
+      ref={inputRef}
+      style={styles.input}
+      placeholder="Informe a leitura"
+      keyboardType="numeric"
+      // Não usamos value ou defaultValue para controlar
+      // Não usamos onChangeText para evitar qualquer re-renderização
+      autoCapitalize="none"
+      autoCorrect={false}
+    />
+    {item.Hidrometro.x10 && (
+      <View style={{
+        flexDirection: "row",
+        alignItems: "center",
+        marginTop: 4,
+      }}></View>
+    )}
+  </View>
+) : (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <Text
                   style={[styles.readingValue, isTablet && { fontSize: 15 }]}
@@ -310,7 +310,11 @@ const FaturaItem = memo<FaturaItemProps>(
             <>
               <TouchableOpacity
                 style={styles.saveButton}
-                onPress={() => handleSave(item)}
+                onPress={() => {
+                  // Obter o valor diretamente da referência do input
+                  const inputValue = inputRef.current?.getValue() || "";
+                  handleSave(item, inputValue);
+                }}
                 disabled={isSaving}
               >
                 {isSaving ? (
@@ -723,9 +727,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         );
       } else if (filtroAtual === "negativos") {
         // Novo caso para filtro de valores negativos
-        resultado = resultado.filter(
-          (fatura) => fatura.valor_leitura_m3 < 0
-        );
+        resultado = resultado.filter((fatura) => fatura.valor_leitura_m3 < 0);
       }
 
       // Aplicar ordenação
@@ -800,7 +802,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
 
       setLeituraAtuais((prev) => ({
         ...prev,
-        [faturaId]: ""
+        [faturaId]: "",
       }));
 
       // Sempre atualizar a data apenas para a fatura que está sendo editada
@@ -883,17 +885,16 @@ const LeiturasDetalhesScreen: React.FC = () => {
     }
   };
 
-  const handleSave = async (fatura: Fatura) => {
+  const handleSave = async (fatura: Fatura, leituraValor: string) => {
     // 1. VALIDAÇÕES INICIAIS
-    const leituraAtual = leituraAtuais[fatura.id];
-    if (!leituraAtual || leituraAtual.trim() === "") {
+    if (!leituraValor || leituraValor.trim() === "") {
       Alert.alert("Erro", "Por favor, informe a leitura atual.");
       return;
     }
 
     // Processamento do valor da leitura
     let leituraAtualNum = parseFloat(
-      leituraAtual.replace(/\./g, "").replace(",", ".")
+      leituraValor.replace(/\./g, "").replace(",", ".")
     );
 
     // Verificar flag x10 do hidrômetro
