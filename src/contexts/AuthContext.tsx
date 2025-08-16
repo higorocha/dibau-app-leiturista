@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import { router } from 'expo-router';
 import api from '../api/axiosConfig';
+import LoggerService from '../services/LoggerService';
 
 // Definir tipos
 interface User {
@@ -33,9 +34,44 @@ const AuthContext = createContext<AuthContextType | null>(null);
 const isTokenValid = (token: string): boolean => {
   try {
     const decoded = jwtDecode(token) as { exp: number };
-    return decoded.exp * 1000 > Date.now();
-  } catch {
+    const now = Date.now() / 1000; // Converter para segundos
+    const timeUntilExpiry = decoded.exp - now;
+    
+    // Token é válido se ainda tem pelo menos 5 minutos de vida
+    console.log(`[AUTH] Token expira em ${Math.round(timeUntilExpiry / 60)} minutos`);
+    return timeUntilExpiry > 300; // 5 minutos de margem
+  } catch (error) {
+    console.error('[AUTH] Erro ao decodificar token:', error);
     return false;
+  }
+};
+
+// Função auxiliar para verificar integridade dos dados armazenados
+const verificarIntegridadeDados = async (): Promise<{ token: string | null, userData: string | null, integro: boolean }> => {
+  try {
+    const token = await AsyncStorage.getItem('dibau_token');
+    const userData = await AsyncStorage.getItem('dibau_user');
+    
+    // Verificar se os dados existem
+    if (!token || !userData) {
+      return { token, userData, integro: false };
+    }
+    
+    // Tentar parsear os dados para verificar integridade
+    try {
+      JSON.parse(userData); // Verificar se userData é JSON válido
+      // Token não precisa ser JSON, mas deve ser string não vazia
+      if (token.trim().length < 10) {
+        throw new Error('Token muito pequeno');
+      }
+      return { token, userData, integro: true };
+    } catch (parseError) {
+      console.error('[AUTH] Dados corrompidos detectados:', parseError);
+      return { token, userData, integro: false };
+    }
+  } catch (error) {
+    console.error('[AUTH] Erro ao verificar integridade dos dados:', error);
+    return { token: null, userData: null, integro: false };
   }
 };
 
@@ -48,21 +84,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const loadAuthData = async () => {
       try {
-        const token = await AsyncStorage.getItem('dibau_token');
-        const userData = await AsyncStorage.getItem('dibau_user');
+        console.log('[AUTH] Iniciando verificação de autenticação...');
+        
+        // Verificar integridade dos dados antes de usar
+        const { token, userData, integro } = await verificarIntegridadeDados();
+        
+        if (!integro) {
+          console.log('[AUTH] Dados não íntegros ou inexistentes, limpando storage');
+          // Limpar apenas se os dados estiverem corrompidos
+          if (token) await AsyncStorage.removeItem('dibau_token');
+          if (userData) await AsyncStorage.removeItem('dibau_user');
+          setUser(null);
+          setLoading(false);
+          return;
+        }
 
+        // Verificar validade do token apenas se os dados estão íntegros
         if (token && userData && isTokenValid(token)) {
-          const parsedUser = JSON.parse(userData);
-          setUser(parsedUser);
-          api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-          console.log('Autenticação restaurada:', parsedUser.nome);
+          try {
+            const parsedUser = JSON.parse(userData);
+            setUser(parsedUser);
+            api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            console.log('[AUTH] Autenticação restaurada com sucesso:', parsedUser.nome);
+          } catch (parseError) {
+            console.error('[AUTH] Erro ao parsear dados do usuário:', parseError);
+            // Apenas limpar em caso de erro de parse
+            await AsyncStorage.removeItem('dibau_token');
+            await AsyncStorage.removeItem('dibau_user');
+            setUser(null);
+          }
         } else {
+          console.log('[AUTH] Token inválido ou expirado - limpando dados expirados');
+          // Só limpar se for realmente inválido/expirado
           if (token) await AsyncStorage.removeItem('dibau_token');
           if (userData) await AsyncStorage.removeItem('dibau_user');
           setUser(null);
         }
       } catch (error) {
-        console.error('Erro ao restaurar autenticação:', error);
+        console.error('[AUTH] Erro ao restaurar autenticação:', error);
+        // Em caso de erro geral, não limpar automaticamente
+        setUser(null);
       } finally {
         setLoading(false);
       }
@@ -74,6 +135,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Função de login
   const login = async (email: string, senha: string): Promise<boolean> => {
     try {
+      console.log('[AUTH] Tentativa de login iniciada');
+      
+      // Log de tentativa de login
+      await LoggerService.getInstance().logAuth('login_attempt', true, { 
+        attempting_email: email 
+      });
+      
       const response = await api.post('/usuarios/login', { email, senha });
       const { token, user } = response.data;
   
@@ -84,8 +152,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       setUser(user);
       
+      // Log de login bem-sucedido
+      await LoggerService.getInstance().logAuth('login_success', true, { 
+        user_email: user.email,
+        user_id: user.id,
+        user_name: user.nome,
+        user_level: user.nivel,
+        token_length: token?.length
+      });
+      
+      console.log('[AUTH] Login realizado com sucesso:', user.nome);
       return true;
     } catch (error) {
+      console.error('[AUTH] Erro no login:', error);
+      
+      // Log de erro no login
+      await LoggerService.getInstance().logAuth('login_error', false, { 
+        attempting_email: email,
+        error_message: (error as any)?.message,
+        error_status: (error as any)?.response?.status,
+        error_data: (error as any)?.response?.data
+      });
+      
       throw error;
     }
   };
@@ -93,6 +181,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Função de logout
   const logout = async (): Promise<void> => {
     try {
+      console.log('[AUTH] Realizando logout...');
+      
+      // Log de logout iniciado
+      await LoggerService.getInstance().logAuth('logout_attempt', true, { 
+        user_email: user?.email,
+        user_id: user?.id
+      });
+      
       await AsyncStorage.removeItem('dibau_token');
       await AsyncStorage.removeItem('dibau_user');
       delete api.defaults.headers.common['Authorization'];
@@ -100,8 +196,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Redirecionar para login
       router.replace('/login');
+      
+      // Log de logout bem-sucedido
+      await LoggerService.getInstance().logAuth('logout_success', true, { 
+        user_email: user?.email,
+        user_id: user?.id
+      });
+      
+      console.log('[AUTH] Logout realizado com sucesso');
     } catch (error) {
-      console.error('Erro ao fazer logout:', error);
+      console.error('[AUTH] Erro ao fazer logout:', error);
+      
+      // Log de erro no logout
+      await LoggerService.getInstance().logAuth('logout_error', false, { 
+        user_email: user?.email,
+        user_id: user?.id,
+        error_message: (error as any)?.message
+      });
     }
   };
 

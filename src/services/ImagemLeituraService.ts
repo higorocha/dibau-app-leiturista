@@ -6,11 +6,20 @@ import * as FileSystem from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
 import axios from "axios";
 import { Platform } from "react-native";
-import NetInfo from '@react-native-community/netinfo';
-
+import NetInfo from "@react-native-community/netinfo";
+import LoggerService from "./LoggerService";
 
 interface ImageLeituraStatus {
   [key: number]: boolean;
+}
+
+interface ImageUploadCallbacks {
+  onStart?: (total: number) => void;
+  onProgress?: (processed: number, total: number) => void;
+  onComplete?: (success: boolean, uploadedCount: number) => void;
+  onCancel?: () => void;
+  checkCancelled?: () => boolean;
+  specificFaturaIds?: number[]; // Novo parâmetro para filtrar faturas específicas
 }
 
 /**
@@ -580,182 +589,296 @@ class ImagemLeituraService {
   }
 
   /**
- * Salva informações sobre uma imagem pendente de upload
- */
-async salvarImagemPendente(leituraId: number, faturaId: number, imagePath: string): Promise<boolean> {
-  try {
-    // Buscar pendências existentes
-    const pendingImagesStr = await AsyncStorage.getItem('pendingImagesUploads') || '{}';
-    const pendingImages = JSON.parse(pendingImagesStr);
-    
-    // Adicionar nova pendência
-    pendingImages[leituraId] = {
-      leituraId,
-      faturaId,
-      imagePath,
-      timestamp: new Date().toISOString()
-    };
-    
-    // Salvar no AsyncStorage
-    await AsyncStorage.setItem('pendingImagesUploads', JSON.stringify(pendingImages));
-    console.log(`[IMAGENS] Imagem para leitura ${leituraId} marcada como pendente de upload`);
-    
-    return true;
-  } catch (error) {
-    console.error('[IMAGENS] Erro ao salvar imagem pendente:', error);
-    return false;
-  }
-}
+   * Salva informações sobre uma imagem pendente de upload
+   */
+  async salvarImagemPendente(
+    leituraId: number,
+    faturaId: number,
+    imagePath: string
+  ): Promise<boolean> {
+    try {
+      // Buscar pendências existentes
+      const pendingImagesStr =
+        (await AsyncStorage.getItem("pendingImagesUploads")) || "{}";
+      const pendingImages = JSON.parse(pendingImagesStr);
 
-/**
- * Verifica se há imagens pendentes para upload
- */
-async verificarImagensPendentes(faturas?: any[]): Promise<{[key: number]: boolean}> {
-  try {
-    // Buscar pendências existentes
-    const pendingImagesStr = await AsyncStorage.getItem('pendingImagesUploads') || '{}';
-    const pendingImages = JSON.parse(pendingImagesStr);
-    
-    // Transformar para o formato esperado (ID da fatura -> boolean)
-    const result: {[key: number]: boolean} = {};
-    
-    Object.values(pendingImages).forEach((item: any) => {
-      if (!faturas || faturas.some(f => f.id === item.faturaId)) {
-        result[item.faturaId] = true;
+      // Adicionar nova pendência
+      pendingImages[leituraId] = {
+        leituraId,
+        faturaId,
+        imagePath,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Salvar no AsyncStorage
+      await AsyncStorage.setItem(
+        "pendingImagesUploads",
+        JSON.stringify(pendingImages)
+      );
+      console.log(
+        `[IMAGENS] Imagem para leitura ${leituraId} marcada como pendente de upload`
+      );
+
+      return true;
+    } catch (error) {
+      console.error("[IMAGENS] Erro ao salvar imagem pendente:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Verifica se há imagens pendentes para upload
+   */
+  async verificarImagensPendentes(
+    faturas?: any[]
+  ): Promise<{ [key: number]: boolean }> {
+    try {
+      // Buscar pendências existentes
+      const pendingImagesStr =
+        (await AsyncStorage.getItem("pendingImagesUploads")) || "{}";
+      const pendingImages = JSON.parse(pendingImagesStr);
+
+      // Transformar para o formato esperado (ID da fatura -> boolean)
+      const result: { [key: number]: boolean } = {};
+
+      Object.values(pendingImages).forEach((item: any) => {
+        if (!faturas || faturas.some((f) => f.id === item.faturaId)) {
+          result[item.faturaId] = true;
+        }
+      });
+
+      return result;
+    } catch (error) {
+      console.error("[IMAGENS] Erro ao verificar imagens pendentes:", error);
+      return {};
+    }
+  }
+
+  // Adicionar ao final da classe ImagemLeituraService
+  /**
+   * Realiza o upload de imagens pendentes
+   * @param callbacks Objeto com callbacks para acompanhar o progresso
+   * @returns Resultado da operação
+   */
+  async uploadImagensPendentes(
+    callbacks?: ImageUploadCallbacks
+  ): Promise<{ success: boolean; uploadedCount: number }> {
+    try {
+      console.log(
+        "[DEBUG IMAGENS] Iniciando verificação de pendências de imagens"
+      );
+
+      // Verificar conexão
+      const netInfoState = await NetInfo.fetch();
+      if (!netInfoState.isConnected) {
+        console.log("[IMAGENS] Sem conexão, não é possível fazer upload");
+        
+        // Log de erro de conectividade
+        await LoggerService.getInstance().warning('Upload Imagens', 'Sem conexão de rede para upload', {
+          categoria: 'upload',
+          dados_contexto: {
+            network_state: netInfoState.type,
+            operation: 'upload_images_no_network'
+          }
+        });
+        
+        return { success: false, uploadedCount: 0 };
       }
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('[IMAGENS] Erro ao verificar imagens pendentes:', error);
-    return {};
-  }
-}
 
-// Adicionar ao final da classe ImagemLeituraService
-/**
- * Realiza o upload de imagens pendentes
- * @param callbacks Objeto com callbacks para acompanhar o progresso
- * @returns Resultado da operação
- */
-async uploadImagensPendentes(callbacks?: any): Promise<{success: boolean, uploadedCount: number}> {
-  try {
-    // Verificar conexão
-    const netInfoState = await NetInfo.fetch();
-    if (!netInfoState.isConnected) {
-      console.log('[IMAGENS] Sem conexão, não é possível fazer upload');
+      // Buscar pendências existentes
+      const pendingImagesStr =
+        (await AsyncStorage.getItem("pendingImagesUploads")) || "{}";
+      console.log("[DEBUG IMAGENS] pendingImagesUploads:", pendingImagesStr);
+      const pendingImages = JSON.parse(pendingImagesStr);
+
+      // Se não há pendências, retornar
+      let pendingIds = Object.keys(pendingImages);
+
+      // NOVO: Filtrar por faturas específicas se fornecidas
+      if (callbacks?.specificFaturaIds) {
+        const specificFaturaIds = callbacks.specificFaturaIds;
+        if (specificFaturaIds.length > 0) {
+          const faturaIdsSet = new Set(specificFaturaIds.map(id => Number(id)));
+          
+          pendingIds = pendingIds.filter(leituraId => {
+            const pendingImage = pendingImages[leituraId];
+            // Verificar se a imagem pertence a uma das faturas especificadas
+            return pendingImage && faturaIdsSet.has(Number(pendingImage.faturaId));
+          });
+          
+          console.log(`[IMAGENS] Filtrando para processar apenas ${pendingIds.length} imagens de faturas específicas`);
+        }
+      }
+
+      if (pendingIds.length === 0) {
+        return { success: true, uploadedCount: 0 };
+      }
+
+      console.log(
+        `[IMAGENS] Iniciando upload de ${pendingIds.length} imagens pendentes`
+      );
+
+      // Notificar início, se houver callback
+      if (callbacks?.onStart) {
+        callbacks.onStart(pendingIds.length);
+      }
+
+      // Para cada imagem pendente, realizar upload
+      let uploadedCount = 0;
+      const newPendingImages = { ...pendingImages };
+
+      // Processar em lotes para melhorar desempenho
+      const BATCH_SIZE = 5; // Menor que o de leituras para não sobrecarregar
+      const totalBatches = Math.ceil(pendingIds.length / BATCH_SIZE);
+
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        // Verificar cancelamento, se houver
+        if (callbacks?.checkCancelled && callbacks.checkCancelled()) {
+          console.log("[IMAGENS] Upload cancelado pelo usuário");
+          if (callbacks?.onCancel) callbacks.onCancel();
+          return { success: false, uploadedCount };
+        }
+
+        // Obter o lote atual
+        const startIdx = batchIndex * BATCH_SIZE;
+        const endIdx = Math.min(startIdx + BATCH_SIZE, pendingIds.length);
+        const batchIds = pendingIds.slice(startIdx, endIdx);
+
+        // Processar cada imagem no lote sequencialmente
+        for (const leituraId of batchIds) {
+          // Verificar cancelamento
+          if (callbacks?.checkCancelled && callbacks.checkCancelled()) {
+            console.log("[IMAGENS] Upload cancelado pelo usuário");
+            if (callbacks?.onCancel) callbacks.onCancel();
+            return { success: false, uploadedCount };
+          }
+
+          const pendingImage = pendingImages[leituraId];
+
+          try {
+            // Verificar se o arquivo existe
+            const fileInfo = await FileSystem.getInfoAsync(
+              pendingImage.imagePath
+            );
+            if (!fileInfo.exists) {
+              console.log(
+                `[IMAGENS] Arquivo não encontrado: ${pendingImage.imagePath}`
+              );
+              delete newPendingImages[leituraId];
+              continue;
+            }
+
+            // Pequeno atraso para não sobrecarregar
+            await new Promise((resolve) => setTimeout(resolve, 200));
+
+            // Criar FormData para upload
+            const formData = new FormData();
+
+            // Extrair extensão e nome do arquivo
+            const extensao =
+              pendingImage.imagePath.split(".").pop()?.toLowerCase() || "jpg";
+            const nomeArquivo = `leitura_${leituraId}_${Date.now()}.${extensao}`;
+
+            // Adicionar arquivo ao FormData
+            formData.append("imagem", {
+              uri: pendingImage.imagePath,
+              name: nomeArquivo,
+              type: `image/${extensao}`,
+            } as any);
+
+            // Enviar para o servidor
+            const response = await api.post(
+              `/leituras/${leituraId}/imagem`,
+              formData,
+              {
+                headers: {
+                  "Content-Type": "multipart/form-data",
+                },
+              }
+            );
+
+            if (response.status === 200) {
+              // Remover da lista de pendentes
+              delete newPendingImages[leituraId];
+              uploadedCount++;
+
+              // REMOVIDO: Log de sucesso individual (sucesso normal)
+
+              // Notificar progresso, se houver callback
+              if (callbacks?.onProgress) {
+                callbacks.onProgress(uploadedCount, pendingIds.length);
+              }
+
+              console.log(
+                `[IMAGENS] Upload da imagem ${leituraId} concluído com sucesso`
+              );
+            }
+          } catch (error) {
+            console.error(
+              `[IMAGENS] Erro ao fazer upload da imagem ${leituraId}:`,
+              error
+            );
+
+            // Log de erro individual
+            await LoggerService.getInstance().error('Upload Imagem', `Erro no upload da imagem leitura ${leituraId}`, {
+              categoria: 'upload',
+              dados_contexto: {
+                leitura_id: leituraId,
+                fatura_id: pendingImage.faturaId,
+                error_message: (error as any)?.message,
+                error_status: (error as any)?.response?.status,
+                file_path: pendingImage.imagePath,
+                progress: `${uploadedCount}/${pendingIds.length}`,
+                operation: 'upload_image_error'
+              }
+            });
+
+            // Manter na lista de pendentes para tentar novamente depois
+          }
+        }
+
+        // Atraso entre lotes
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      // Salvar lista atualizada de pendências
+      await AsyncStorage.setItem(
+        "pendingImagesUploads",
+        JSON.stringify(newPendingImages)
+      );
+
+      // REMOVIDO: Log de conclusão do upload (sucesso normal)
+
+      // Notificar conclusão, se houver callback
+      if (callbacks?.onComplete) {
+        callbacks.onComplete(true, uploadedCount);
+      }
+
+      return { success: true, uploadedCount };
+    } catch (error) {
+      console.error(
+        "[IMAGENS] Erro ao fazer upload de imagens pendentes:",
+        error
+      );
+
+      // Log de erro geral
+      await LoggerService.getInstance().error('Upload Imagens', 'Erro geral no upload de imagens pendentes', {
+        categoria: 'upload',
+        dados_contexto: {
+          error_message: (error as any)?.message,
+          uploaded_count: 0,
+          operation: 'upload_images_error'
+        }
+      });
+
+      // Notificar erro, se houver callback
+      if (callbacks?.onComplete) {
+        callbacks.onComplete(false, 0);
+      }
+
       return { success: false, uploadedCount: 0 };
     }
-    
-    // Buscar pendências existentes
-    const pendingImagesStr = await AsyncStorage.getItem('pendingImagesUploads') || '{}';
-    const pendingImages = JSON.parse(pendingImagesStr);
-    
-    // Se não há pendências, retornar
-    const pendingIds = Object.keys(pendingImages);
-    if (pendingIds.length === 0) {
-      return { success: true, uploadedCount: 0 };
-    }
-    
-    console.log(`[IMAGENS] Iniciando upload de ${pendingIds.length} imagens pendentes`);
-    
-    // Notificar início, se houver callback
-    if (callbacks?.onStart) {
-      callbacks.onStart(pendingIds.length);
-    }
-    
-    // Para cada imagem pendente, realizar upload
-    let uploadedCount = 0;
-    const newPendingImages = { ...pendingImages };
-    
-    for (let i = 0; i < pendingIds.length; i++) {
-      // Verificar cancelamento, se houver
-      if (callbacks?.checkCancelled && callbacks.checkCancelled()) {
-        console.log('[IMAGENS] Upload cancelado pelo usuário');
-        if (callbacks?.onCancel) callbacks.onCancel();
-        return { success: false, uploadedCount };
-      }
-      
-      const leituraId = pendingIds[i];
-      const pendingImage = pendingImages[leituraId];
-      
-      try {
-        // Verificar se o arquivo existe
-        const fileInfo = await FileSystem.getInfoAsync(pendingImage.imagePath);
-        if (!fileInfo.exists) {
-          console.log(`[IMAGENS] Arquivo não encontrado: ${pendingImage.imagePath}`);
-          delete newPendingImages[leituraId];
-          continue;
-        }
-        
-        // Pequeno atraso para não sobrecarregar
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Criar FormData para upload
-        const formData = new FormData();
-        
-        // Extrair extensão e nome do arquivo
-        const extensao = pendingImage.imagePath.split('.').pop()?.toLowerCase() || 'jpg';
-        const nomeArquivo = `leitura_${leituraId}_${Date.now()}.${extensao}`;
-        
-        // Adicionar arquivo ao FormData
-        formData.append('imagem', {
-          uri: pendingImage.imagePath,
-          name: nomeArquivo,
-          type: `image/${extensao}`,
-        } as any);
-        
-        // Enviar para o servidor
-        const response = await api.post(
-          `/leituras/${leituraId}/imagem`,
-          formData,
-          {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-          }
-        );
-        
-        if (response.status === 200) {
-          // Remover da lista de pendentes
-          delete newPendingImages[leituraId];
-          uploadedCount++;
-          
-          // Notificar progresso, se houver callback
-          if (callbacks?.onProgress) {
-            callbacks.onProgress(uploadedCount, pendingIds.length);
-          }
-          
-          console.log(`[IMAGENS] Upload da imagem ${leituraId} concluído com sucesso`);
-        }
-      } catch (error) {
-        console.error(`[IMAGENS] Erro ao fazer upload da imagem ${leituraId}:`, error);
-        // Manter na lista de pendentes para tentar novamente depois
-      }
-    }
-    
-    // Salvar lista atualizada de pendências
-    await AsyncStorage.setItem('pendingImagesUploads', JSON.stringify(newPendingImages));
-    
-    // Notificar conclusão, se houver callback
-    if (callbacks?.onComplete) {
-      callbacks.onComplete(true, uploadedCount);
-    }
-    
-    return { success: true, uploadedCount };
-  } catch (error) {
-    console.error('[IMAGENS] Erro ao fazer upload de imagens pendentes:', error);
-    
-    // Notificar erro, se houver callback
-    if (callbacks?.onComplete) {
-      callbacks.onComplete(false, 0);
-    }
-    
-    return { success: false, uploadedCount: 0 };
   }
 }
-}
-
-
 
 export default new ImagemLeituraService();

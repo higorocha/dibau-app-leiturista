@@ -2,13 +2,13 @@
   "expo": {
     "name": "DIBAU - App de Leituras",
     "slug": "SistemaIrrigacaoApp",
-    "version": "1.0.0",
-    "runtimeVersion": "1.0.0",
+    "version": "1.0.1",
+    "runtimeVersion": "1.0.1",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "updates": {
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_ERROR_RECOVERY",
@@ -57,7 +57,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

@@ -27,6 +27,7 @@ import ImagemLeituraService from "@/src/services/ImagemLeituraService";
 import { formatMesAno } from "@/src/utils/formatters";
 import SyncProgressModal from "@/src/components/common/SyncProgressModal";
 import { syncPendingLeituras, cancelSync } from "@/src/services/SyncService";
+import LoggerService from "@/src/services/LoggerService";
 
 // Adicione após as importações:
 const FATURAS_STORAGE_KEY = "leituras_faturas_selecionadas";
@@ -238,6 +239,7 @@ const LeiturasScreen: React.FC = () => {
   // Adicione a função para sincronizar um mês específico
   const sincronizarMes = async (mesAno: string) => {
     try {
+      // Verificação inicial de conexão
       if (isOffline) {
         Toast.show({
           type: "error",
@@ -248,55 +250,146 @@ const LeiturasScreen: React.FC = () => {
         });
         return;
       }
-
-      // Encontrar a leitura correspondente a este mês
+  
+      // Buscar leitura correspondente ao mês
       const leitura = leituras.find((l) => l.mesAno === mesAno);
-      if (!leitura) return;
-
-      // Preparar o modal de progresso
+      if (!leitura) {
+        Toast.show({
+          type: "error",
+          text1: "Erro",
+          text2: "Mês não encontrado",
+          position: "bottom",
+          visibilityTime: 2000,
+        });
+        return;
+      }
+  
+      // INÍCIO: Verificação melhorada de corrupção dos dados armazenados
+      try {
+        const pendingLeiturasStr = await AsyncStorage.getItem("pendingLeituraUpdates");
+        if (pendingLeiturasStr) {
+          // Tentar parsear para verificar se não está corrompido
+          try {
+            const pendingLeituras = JSON.parse(pendingLeiturasStr);
+            
+            // Verificação mais rigorosa da estrutura dos dados
+            if (typeof pendingLeituras !== 'object' || pendingLeituras === null || Array.isArray(pendingLeituras)) {
+              console.warn("[SYNC] Estrutura de dados inválida - resetando pendingLeituraUpdates");
+              await AsyncStorage.removeItem("pendingLeituraUpdates");
+              Toast.show({
+                type: "warning",
+                text1: "Dados redefinidos",
+                text2: "Estrutura de dados de sincronização foi corrigida",
+                position: "bottom",
+                visibilityTime: 2000,
+              });
+              // Não retorna aqui - continua com a sincronização
+            }
+          } catch (parseError) {
+            // Se houver erro ao parsear JSON, dados estão corrompidos
+            console.error("[SYNC] JSON corrompido detectado:", parseError);
+            console.log("[SYNC] Dados corrompidos, tentando recuperar backup...");
+            
+            // Tentar recuperar backup ou criar estrutura vazia
+            try {
+              const backupData = await AsyncStorage.getItem("pendingLeituraUpdates_backup");
+              if (backupData) {
+                console.log("[SYNC] Tentando restaurar backup...");
+                const backupParsed = JSON.parse(backupData);
+                await AsyncStorage.setItem("pendingLeituraUpdates", backupData);
+                console.log("[SYNC] Backup restaurado com sucesso");
+              } else {
+                // Criar estrutura vazia se não há backup
+                await AsyncStorage.setItem("pendingLeituraUpdates", "{}");
+                console.log("[SYNC] Estrutura vazia criada");
+              }
+            } catch (backupError) {
+              console.error("[SYNC] Erro ao restaurar backup:", backupError);
+              await AsyncStorage.setItem("pendingLeituraUpdates", "{}");
+            }
+            
+            Toast.show({
+              type: "info",
+              text1: "Dados recuperados",
+              text2: "Sistema de dados de sincronização foi reparado",
+              position: "bottom",
+              visibilityTime: 2000,
+            });
+            // Não retorna aqui - continua com a sincronização
+          }
+        }
+      } catch (storageError) {
+        // Erro ao acessar AsyncStorage
+        console.error("[SYNC] Erro crítico no AsyncStorage:", storageError);
+        Toast.show({
+          type: "error",
+          text1: "Erro de armazenamento",
+          text2: "Problema ao acessar dados locais. Tente reiniciar o app.",
+          position: "bottom",
+          visibilityTime: 4000,
+        });
+        return; // Só retorna em caso de erro crítico
+      }
+      // FIM: Verificação melhorada de corrupção
+  
+      // Verificar dados pendentes ANTES de mostrar o modal
+      const pendingLeiturasStr = await AsyncStorage.getItem("pendingLeituraUpdates");
+      const pendingLeituras = pendingLeiturasStr ? JSON.parse(pendingLeiturasStr) : {};
+      
+      const imagensPendentes = await ImagemLeituraService.verificarImagensPendentes(leitura.faturas);
+      const totalImagensPendentes = Object.keys(imagensPendentes).length;
+  
+      // Filtrar leituras deste mês (melhorada para grandes volumes)
+      let leiturasDesteMes = [];
+      const pendingIds = Object.keys(pendingLeituras);
+      const faturasIdsMap = new Map(); // Usar Map para busca mais eficiente
+      
+      // Criar mapa para busca rápida
+      leitura.faturas.forEach(f => {
+        faturasIdsMap.set(String(f.id), true);
+      });
+      
+      // Filtrar usando o mapa (mais eficiente que find() para grandes volumes)
+      for (const id of pendingIds) {
+        if (faturasIdsMap.has(id)) {
+          leiturasDesteMes.push(id);
+        }
+      }
+  
+      const temLeiturasParaSincronizar = leiturasDesteMes.length > 0;
+      const temImagensParaSincronizar = totalImagensPendentes > 0;
+  
+      // Verificar se há algo para sincronizar antes de mostrar o modal
+      if (!temLeiturasParaSincronizar && !temImagensParaSincronizar) {
+        Toast.show({
+          type: "info",
+          text1: "Nada a sincronizar",
+          text2: "Não há dados pendentes para este mês",
+          position: "bottom",
+          visibilityTime: 2000,
+        });
+        return;
+      }
+  
+      // Inicializar modal com valores corretos
       setSyncProgress(0);
       setSyncItemsProcessed(0);
-      setSyncTotalItems(0);
-      setSyncMessage(
-        `Verificando dados pendentes de ${formatMesAno(mesAno)}...`
-      );
-
+      setSyncTotalItems(temLeiturasParaSincronizar ? leiturasDesteMes.length : 0);
+      setSyncMessage(`Verificando dados pendentes de ${formatMesAno(mesAno)}...`);
+  
       // Resetar progresso de imagens
       setImgSyncProgress(0);
       setImgSyncItemsProcessed(0);
-      setImgSyncTotalItems(0);
-      setImgSyncMessage("");
-
+      setImgSyncTotalItems(temImagensParaSincronizar ? totalImagensPendentes : 0);
+      setImgSyncMessage(temImagensParaSincronizar ? "Preparando envio de imagens..." : "");
+  
+      // Mostrar modal somente após ter valores corretos
       setSyncModalVisible(true);
-
-      // Verificar se temos imagens pendentes para este mês
-      const imagensPendentes =
-        await ImagemLeituraService.verificarImagensPendentes(leitura.faturas);
-      const totalImagensPendentes = Object.keys(imagensPendentes).length;
-
-      // Verificar se temos leituras pendentes para este mês
-      const pendingLeiturasStr = await AsyncStorage.getItem(
-        "pendingLeituraUpdates"
-      );
-      const pendingLeituras = pendingLeiturasStr
-        ? JSON.parse(pendingLeiturasStr)
-        : {};
-
-      // Filtrar apenas leituras deste mês
-      const leiturasDesteMes = leitura.faturas
-        .map((f) => String(f.id))
-        .filter((id) => pendingLeituras[id]);
-
-      const temLeiturasParaSincronizar = leiturasDesteMes.length > 0;
-
-      console.log(
-        `[DEBUG] Mês ${mesAno}: ${leiturasDesteMes.length} leituras pendentes, ${totalImagensPendentes} imagens pendentes`
-      );
-
+  
       // Executar sincronizações apropriadas
       let leiturasSincronizadas = 0;
       let imagensSincronizadas = 0;
-
+  
       // 1. Sincronizar leituras, se houver
       if (temLeiturasParaSincronizar) {
         setSyncMessage(
@@ -304,64 +397,94 @@ const LeiturasScreen: React.FC = () => {
             mesAno
           )}...`
         );
-        setSyncTotalItems(leiturasDesteMes.length);
-
-        const resultadoLeituras = await syncPendingLeituras({
-          onStart: (total: number) => {
-            console.log(`[DEBUG] Iniciando sincronização de ${total} leituras`);
-          },
-          onProgress: (processed: number, total: number) => {
-            const percentComplete = (processed / total) * 100;
-            setSyncProgress(percentComplete);
-            setSyncItemsProcessed(processed);
-            setSyncMessage(
-              `Sincronizando leitura ${processed} de ${total} para ${formatMesAno(
-                mesAno
-              )}...`
-            );
-          },
-          onComplete: (success: boolean, syncedCount: number) => {
-            if (success) {
-              setSyncProgress(100);
-              leiturasSincronizadas = syncedCount;
-              console.log(
-                `[DEBUG] ${syncedCount} leituras sincronizadas com sucesso`
+  
+        try {
+          const resultadoLeituras = await syncPendingLeituras({
+            onStart: (total: number) => {
+              console.log(`Iniciando sincronização de ${total} leituras`);
+              // Garantir que os valores no modal estejam corretos
+              setSyncTotalItems(total);
+              setSyncItemsProcessed(0);
+              setSyncProgress(0);
+            },
+            onProgress: (processed: number, total: number) => {
+              // Garantir que não ultrapasse 100%
+              const percentComplete = Math.min((processed / total) * 100, 99.9);
+              setSyncProgress(percentComplete);
+              setSyncItemsProcessed(processed);
+              setSyncMessage(
+                `Sincronizando leitura ${processed} de ${total} para ${formatMesAno(
+                  mesAno
+                )}...`
               );
-            }
-          },
-          onCancel: () => {
-            console.log(
-              "[DEBUG] Sincronização de leituras cancelada pelo usuário"
-            );
-            setSyncModalVisible(false);
-            return;
-          },
-        });
+            },
+            onComplete: (success: boolean, syncedCount: number) => {
+              if (success) {
+                // Só marca 100% se realmente sincronizou algo
+                setSyncProgress(syncedCount > 0 ? 100 : 0);
+                leiturasSincronizadas = syncedCount;
+                console.log(
+                  `${syncedCount} leituras sincronizadas com sucesso`
+                );
+              } else {
+                // Em caso de falha
+                setSyncProgress(0);
+                setSyncMessage("Erro ao sincronizar leituras");
+              }
+            },
+            onCancel: () => {
+              console.log("Sincronização de leituras cancelada pelo usuário");
+              setSyncModalVisible(false);
+              
+              // Mostrar toast informando o cancelamento
+              Toast.show({
+                type: "info",
+                text1: "Sincronização cancelada",
+                text2: "Você cancelou o processo de sincronização",
+                position: "bottom",
+                visibilityTime: 2000,
+              });
+              return;
+            },
+            // IDs específicos para sincronizar (apenas os deste mês)
+            specificIds: leiturasDesteMes,
+          });
+        } catch (error) {
+          console.error("Erro ao sincronizar leituras:", error);
+          setSyncProgress(0);
+          setSyncMessage("Erro ao sincronizar leituras");
+        }
       } else {
-        // Se não há leituras, marcar como concluído
-        setSyncProgress(100);
-        setSyncMessage("Nenhuma leitura pendente encontrada");
+        // Se não há leituras para sincronizar, defina valores adequados
+        setSyncProgress(0);
+        setSyncItemsProcessed(0);
+        setSyncTotalItems(0);
+        setSyncMessage("Sem leituras pendentes para este mês");
       }
-
+  
       // 2. Sincronizar imagens, se houver
-      if (totalImagensPendentes > 0) {
+      if (temImagensParaSincronizar) {
         setImgSyncMessage(
           `Preparando para enviar ${totalImagensPendentes} imagens...`
         );
         setImgSyncTotalItems(totalImagensPendentes);
-
+  
         try {
+          // Precisamos criar um array de IDs de faturas deste mês
+          const faturaIdsArray = leitura.faturas.map(f => f.id);
+          
           const resultadoImagens =
             await ImagemLeituraService.uploadImagensPendentes({
               onStart: (total: number) => {
-                console.log(`[DEBUG] Iniciando upload de ${total} imagens`);
                 setImgSyncMessage(`Enviando ${total} imagens pendentes...`);
+                // Garantir que os valores no modal estejam corretos
+                setImgSyncTotalItems(total);
+                setImgSyncItemsProcessed(0);
+                setImgSyncProgress(0);
               },
               onProgress: (processed: number, total: number) => {
-                console.log(
-                  `[DEBUG] Progresso de imagens: ${processed}/${total}`
-                );
-                const percent = (processed / total) * 100;
+                // Garantir que não ultrapasse 100%
+                const percent = Math.min((processed / total) * 100, 99.9);
                 setImgSyncProgress(percent);
                 setImgSyncItemsProcessed(processed);
                 setImgSyncMessage(
@@ -369,12 +492,10 @@ const LeiturasScreen: React.FC = () => {
                 );
               },
               onComplete: (success: boolean, uploadedCount: number) => {
-                console.log(
-                  `[DEBUG] Upload de imagens: success=${success}, uploadedCount=${uploadedCount}`
-                );
-                setImgSyncProgress(100);
+                // Só marca 100% se realmente sincronizou algo
+                setImgSyncProgress(uploadedCount > 0 ? 100 : 0);
                 imagensSincronizadas = uploadedCount;
-
+  
                 if (success && uploadedCount > 0) {
                   setImgSyncMessage(
                     `Upload de ${uploadedCount} imagens concluído!`
@@ -382,26 +503,31 @@ const LeiturasScreen: React.FC = () => {
                 } else if (!success) {
                   setImgSyncMessage("Ocorreu um erro ao enviar imagens");
                 } else {
-                  setImgSyncMessage("Nenhuma imagem necessária envio");
+                  setImgSyncMessage("Nenhuma imagem necessitou envio");
                 }
               },
+              // Parâmetro para verificar cancelamento
               checkCancelled: () => false,
+              // Filtrar apenas para faturas deste mês
+              specificFaturaIds: faturaIdsArray,
             });
         } catch (error) {
-          console.error("[DEBUG] Erro ao sincronizar imagens:", error);
-          setImgSyncProgress(100);
+          console.error("Erro ao sincronizar imagens:", error);
+          setImgSyncProgress(0);
           setImgSyncMessage("Erro ao sincronizar imagens");
         }
       } else {
-        // Se não há imagens, marcar como concluído
-        setImgSyncProgress(100);
-        setImgSyncMessage("Nenhuma imagem pendente encontrada");
+        // Se não há imagens para sincronizar, defina valores adequados
+        setImgSyncProgress(0);
+        setImgSyncItemsProcessed(0);
+        setImgSyncTotalItems(0);
+        setImgSyncMessage("Sem imagens pendentes para este mês");
       }
-
+  
       // 3. Finalizar o processo
       setTimeout(() => {
         setSyncModalVisible(false);
-
+  
         // Mensagem de sucesso baseada no que foi sincronizado
         const mensagemToast = () => {
           if (leiturasSincronizadas > 0 && imagensSincronizadas > 0) {
@@ -425,12 +551,12 @@ const LeiturasScreen: React.FC = () => {
           } else {
             return {
               type: "info",
-              text1: "Nada a sincronizar",
-              text2: "Não havia dados pendentes para sincronização",
+              text1: "Nada foi sincronizado",
+              text2: "Verifique as pendências e tente novamente",
             };
           }
         };
-
+  
         // Mostrar toast com resultado
         const msg = mensagemToast();
         Toast.show({
@@ -438,17 +564,17 @@ const LeiturasScreen: React.FC = () => {
           position: "bottom",
           visibilityTime: 3000,
         });
-
+  
         // Atualizar a lista de meses com pendências
         verificarDadosPendentes();
-
+  
         // Recarregar dados se algo foi sincronizado
         if (leiturasSincronizadas > 0 || imagensSincronizadas > 0) {
           carregarLeituras(true);
         }
       }, 1500);
     } catch (error) {
-      console.error("[ERROR] Erro ao sincronizar mês:", error);
+      console.error("Erro ao sincronizar mês:", error);
       setSyncModalVisible(false);
       Toast.show({
         type: "error",
@@ -676,6 +802,14 @@ const LeiturasScreen: React.FC = () => {
           try {
             // 1. Salvar índice dos meses
             const mesesDisponiveis = leiturasMensais.map((mes) => mes.mesAno);
+            
+            // Log antes de salvar
+            await LoggerService.getInstance().logStorage('save_meses_index', 'leituras_meses_index', true, {
+              meses_count: mesesDisponiveis.length,
+              meses: mesesDisponiveis,
+              operation: 'sync_data'
+            });
+            
             await AsyncStorage.setItem(
               "leituras_meses_index",
               JSON.stringify(mesesDisponiveis)
@@ -688,8 +822,25 @@ const LeiturasScreen: React.FC = () => {
             for (let i = 0; i < leiturasMensais.length; i++) {
               const mes = leiturasMensais[i];
               const chave = `leituras_mes_${mes.mesAno.replace("/", "_")}`;
-              await AsyncStorage.setItem(chave, JSON.stringify(mes));
-              console.log(`[DEBUG] Dados do mês ${mes.mesAno} salvos`);
+              
+              try {
+                await AsyncStorage.setItem(chave, JSON.stringify(mes));
+                
+                // Log de sucesso
+                await LoggerService.getInstance().logStorage('save_mes_data', chave, true, {
+                  mes_ano: mes.mesAno,
+                  faturas_count: mes.faturas.length,
+                  leituras_informadas: mes.leiturasInformadas,
+                  total_leituras: mes.totalLeituras,
+                  operation: 'sync_data'
+                });
+                
+                console.log(`[DEBUG] Dados do mês ${mes.mesAno} salvos`);
+              } catch (storageError) {
+                // Log de erro
+                await LoggerService.getInstance().logStorage('save_mes_data', chave, false, storageError);
+                console.error(`[ERROR] Erro ao salvar mês ${mes.mesAno}:`, storageError);
+              }
             }
 
             // 3. Salvar timestamp
@@ -771,6 +922,11 @@ const LeiturasScreen: React.FC = () => {
     try {
       console.log("[DEBUG] carregarDadosLocais iniciado");
 
+      // Log de início do carregamento
+      await LoggerService.getInstance().logStorage('load_offline_data_start', 'offline_data', true, {
+        operation: 'load_offline'
+      });
+
       // Verificar se temos o índice de meses
       const mesesIndexStr = await AsyncStorage.getItem("leituras_meses_index");
       const timestamp = await AsyncStorage.getItem("leituras_timestamp");
@@ -778,6 +934,12 @@ const LeiturasScreen: React.FC = () => {
       // Se não temos índice de meses, não temos dados locais
       if (!mesesIndexStr) {
         console.log("[DEBUG] Nenhum índice de meses encontrado");
+        
+        // Log quando não há dados offline
+        await LoggerService.getInstance().logStorage('load_offline_no_index', 'leituras_meses_index', false, {
+          operation: 'load_offline'
+        });
+        
         return false;
       }
 

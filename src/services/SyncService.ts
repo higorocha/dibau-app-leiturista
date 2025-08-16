@@ -1,15 +1,17 @@
 // src/services/SyncService.ts - Versão modificada com suporte a progresso
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import api from '../api/axiosConfig';
-import Toast from 'react-native-toast-message';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import api from "../api/axiosConfig";
+import Toast from "react-native-toast-message";
+import LoggerService from "./LoggerService";
 
 interface SyncProgressCallbacks {
   onProgress?: (processed: number, total: number) => void;
   onStart?: (total: number) => void;
   onComplete?: (success: boolean, syncedCount: number) => void;
   onCancel?: () => void;
+  specificIds?: string[]; // Novo parâmetro para filtrar IDs específicos
 }
 
 // Variável para controlar cancelamento
@@ -25,6 +27,13 @@ export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Pr
     const netInfo = await NetInfo.fetch();
     if (!netInfo.isConnected) {
       console.log('Sem conexão, não é possível sincronizar');
+      
+      // Log de erro de conectividade
+      await LoggerService.getInstance().logSync('sync_no_network', false, { 
+        network_state: netInfo.type,
+        operation: 'leituras_sync'
+      });
+      
       return { success: false, syncedCount: 0 };
     }
     
@@ -36,7 +45,16 @@ export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Pr
     }
     
     const pendingData = JSON.parse(pendingDataStr);
-    const pendingIds = Object.keys(pendingData);
+    let pendingIds = Object.keys(pendingData);
+    
+    // NOVO: Filtrar por IDs específicos se fornecidos
+    if (callbacks?.specificIds) {
+      const specificIds = callbacks.specificIds;
+      if (specificIds.length > 0) {
+        pendingIds = pendingIds.filter(id => specificIds.includes(id));
+        console.log(`Filtrando para sincronizar apenas ${pendingIds.length} IDs específicos`);
+      }
+    }
     
     if (pendingIds.length === 0) {
       return { success: true, syncedCount: 0 };
@@ -55,42 +73,85 @@ export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Pr
     const syncStatusData = await AsyncStorage.getItem('pendingLeiturasSyncs') || '{}';
     const syncStatus = JSON.parse(syncStatusData);
     
-    for (let i = 0; i < pendingIds.length; i++) {
-      // Verificar se a sincronização foi cancelada
+    // Processar em lotes de 10 para melhor desempenho
+    const BATCH_SIZE = 10;
+    const totalBatches = Math.ceil(pendingIds.length / BATCH_SIZE);
+
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      // Verificar cancelamento a cada lote
       if (syncCancelled) {
         console.log('Sincronização cancelada pelo usuário');
+        
+        // REMOVIDO: Log de cancelamento (operação normal do usuário)
+        
         if (callbacks?.onCancel) {
           callbacks.onCancel();
         }
         return { success: false, syncedCount };
       }
       
-      const id = pendingIds[i];
-      const update = pendingData[id];
+      // Obter o lote atual
+      const startIdx = batchIndex * BATCH_SIZE;
+      const endIdx = Math.min(startIdx + BATCH_SIZE, pendingIds.length);
+      const batchIds = pendingIds.slice(startIdx, endIdx);
       
-      try {
-        // Pequeno atraso para permitir atualização da UI entre itens
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Enviar para a API
-        await api.put(`/faturamensal/atualizar-leitura/${id}`, {
-          leitura: update.leitura,
-          data_leitura: update.data_leitura,
-        });
-        
-        // Remover do objeto de pendentes
-        delete newPendingData[id];
-        delete syncStatus[id];
-        syncedCount++;
-        
-        // Chamar callback de progresso, se existir
-        if (callbacks?.onProgress) {
-          callbacks.onProgress(syncedCount, pendingIds.length);
+      // Processar o lote em sequência para evitar sobrecarga do servidor
+      for (const id of batchIds) {
+        // Verificar se a sincronização foi cancelada
+        if (syncCancelled) {
+          console.log('Sincronização cancelada pelo usuário');
+          
+          // REMOVIDO: Log de cancelamento no meio do processo (operação normal)
+          
+          if (callbacks?.onCancel) {
+            callbacks.onCancel();
+          }
+          return { success: false, syncedCount };
         }
-      } catch (error) {
-        console.error(`Erro ao sincronizar leitura ${id}:`, error);
-        // Manter na lista de pendentes para tentar novamente depois
+        
+        const update = pendingData[id];
+        
+        try {
+          // Pequeno atraso para permitir atualização da UI entre itens
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Enviar para a API
+          await api.put(`/faturamensal/app/atualizar-leitura/${id}`, {
+            leitura: update.leitura,
+            data_leitura: update.data_leitura,
+          });
+          
+          // Remover do objeto de pendentes
+          delete newPendingData[id];
+          delete syncStatus[id];
+          syncedCount++;
+          
+          // REMOVIDO: Log de sucesso individual (sucesso normal)
+          
+          // Chamar callback de progresso, se existir
+          if (callbacks?.onProgress) {
+            callbacks.onProgress(syncedCount, pendingIds.length);
+          }
+        } catch (error) {
+          console.error(`Erro ao sincronizar leitura ${id}:`, error);
+          
+          // Log de erro individual
+          await LoggerService.getInstance().logSync('sync_item_error', false, { 
+            fatura_id: id,
+            leitura: update.leitura,
+            data_leitura: update.data_leitura,
+            error_message: (error as any)?.message,
+            error_status: (error as any)?.response?.status,
+            progress: `${syncedCount}/${pendingIds.length}`,
+            operation: 'leituras_sync'
+          });
+          
+          // Manter na lista de pendentes para tentar novamente depois
+        }
       }
+      
+      // Atraso mínimo entre lotes
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
     
     // Salvar o objeto atualizado (sem os que foram sincronizados)
@@ -101,6 +162,8 @@ export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Pr
     if (callbacks?.onComplete) {
       callbacks.onComplete(true, syncedCount);
     }
+    
+    // REMOVIDO: Log de conclusão da sincronização (sucesso normal)
     
     if (syncedCount > 0 && !syncCancelled) {
       Toast.show({
@@ -115,6 +178,13 @@ export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Pr
   } catch (error) {
     console.error('Erro ao sincronizar leituras pendentes:', error);
     
+    // Log de erro geral na sincronização
+    await LoggerService.getInstance().logSync('sync_error', false, { 
+      error_message: (error as any)?.message,
+      synced_count: 0,
+      operation: 'leituras_sync'
+    });
+    
     // Chamar callback de conclusão com erro, se existir
     if (callbacks?.onComplete) {
       callbacks.onComplete(false, 0);
@@ -123,7 +193,6 @@ export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Pr
     return { success: false, syncedCount: 0 };
   }
 };
-
 // Função para cancelar sincronização em andamento
 export const cancelSync = () => {
   syncCancelled = true;

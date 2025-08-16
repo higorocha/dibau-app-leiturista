@@ -5,6 +5,7 @@ import NetInfo from '@react-native-community/netinfo';
 import api from '../api/axiosConfig';
 import Toast from 'react-native-toast-message';
 import { Lote, Cultura, LoteCultura } from '../types/models';
+import LoggerService from './LoggerService';
 
 // Interface para a estrutura de cultura no formato de envio
 interface CulturaFormatada {
@@ -78,6 +79,13 @@ export const syncPendingCulturas = async (callbacks?: SyncProgressCallbacks): Pr
     const netInfo = await NetInfo.fetch();
     if (!netInfo.isConnected) {
       console.log('Sem conexão, não é possível sincronizar culturas');
+      
+      // Log de erro de conectividade
+      await LoggerService.getInstance().logSync('culturas_sync_no_network', false, { 
+        network_state: netInfo.type,
+        operation: 'culturas_sync'
+      });
+      
       return { success: false, syncedCount: 0 };
     }
     
@@ -149,6 +157,17 @@ export const syncPendingCulturas = async (callbacks?: SyncProgressCallbacks): Pr
         }
       } catch (error) {
         console.error(`Erro ao sincronizar culturas do lote ${loteId}:`, error);
+        
+        // Log de erro individual
+        await LoggerService.getInstance().logSync('culturas_sync_item_error', false, { 
+          lote_id: loteId,
+          culturas_count: update.culturas.length,
+          deleted_cultures: update.deletedCultureIds.length,
+          error_message: (error as any)?.message,
+          error_status: (error as any)?.response?.status,
+          operation: 'culturas_sync'
+        });
+        
         // Manter na lista de pendentes para tentar novamente depois
       }
     }
@@ -180,6 +199,13 @@ export const syncPendingCulturas = async (callbacks?: SyncProgressCallbacks): Pr
     return { success: true, syncedCount };
   } catch (error) {
     console.error('Erro ao sincronizar culturas pendentes:', error);
+    
+    // Log de erro geral na sincronização
+    await LoggerService.getInstance().logSync('culturas_sync_error', false, { 
+      error_message: (error as any)?.message,
+      synced_count: 0,
+      operation: 'culturas_sync'
+    });
     
     // Notificar erro, se houver callback
     if (callbacks?.onComplete) {

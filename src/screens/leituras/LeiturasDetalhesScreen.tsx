@@ -179,12 +179,7 @@ const FaturaItem = memo<FaturaItemProps>(
               <Ionicons name="analytics-outline" size={16} color="#666" />
               <Text style={[styles.infoText, isTablet && { fontSize: 14 }]}>
                 Leitura Anterior:{" "}
-                {formatarNumeroComMilhar(
-                  // Se for x10 e não tiver leitura atual informada, divide por 10
-                  item.Hidrometro.x10 && !item.Leitura?.leitura
-                    ? (item.leitura_anterior || 0) / 10
-                    : item.leitura_anterior || 0
-                )}{" "}
+                {formatarNumeroComMilhar(item.leitura_anterior || 0)}{" "}
                 m³
                 {item.data_leitura_anterior ? (
                   <Text style={[styles.infoText, isTablet && { fontSize: 14 }]}>
@@ -1000,7 +995,7 @@ const LeiturasDetalhesScreen: React.FC = () => {
         // === MODO ONLINE: Enviar para o servidor ===
         try {
           const response = await api.put(
-            `/faturamensal/atualizar-leitura/${fatura.id}`,
+            `/faturamensal/app/atualizar-leitura/${fatura.id}`,
             {
               leitura: leituraAtualNum,
               data_leitura: dataFormatada,
