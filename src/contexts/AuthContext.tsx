@@ -6,6 +6,11 @@ import { router } from 'expo-router';
 import api from '../api/axiosConfig';
 import LoggerService from '../services/LoggerService';
 
+// Debug helper para banco de dados (desenvolvimento)
+if (__DEV__) {
+  require('../utils/databaseDebug');
+}
+
 // Definir tipos
 interface User {
   id: number;

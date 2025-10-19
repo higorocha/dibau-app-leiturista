@@ -1,6 +1,5 @@
-// src/contexts/LeiturasContext.tsx - Versão melhorada com persistência
-import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// src/contexts/LeiturasContext.tsx - Versão simplificada sem persistência offline
+import React, { createContext, useState, useContext, ReactNode } from 'react';
 
 interface LeiturasContextType {
   faturasSelecionadas: any[];
@@ -12,76 +11,23 @@ interface LeiturasContextType {
 
 const LeiturasContext = createContext<LeiturasContextType | null>(null);
 
-// Chaves para AsyncStorage
-const FATURAS_STORAGE_KEY = 'leituras_faturas_selecionadas';
-const MES_ANO_STORAGE_KEY = 'leituras_mes_ano_selecionado';
-
 export const LeiturasProvider: React.FC<{children: ReactNode}> = ({ children }) => {
-  const [faturasSelecionadas, setFaturasSelecionadasState] = useState<any[]>([]);
-  const [mesAnoSelecionado, setMesAnoSelecionadoState] = useState<string>('');
+  const [faturasSelecionadas, setFaturasSelecionadas] = useState<any[]>([]);
+  const [mesAnoSelecionado, setMesAnoSelecionado] = useState<string>('');
 
-  // Carregar dados salvos ao iniciar
-  useEffect(() => {
-    const carregarDadosSalvos = async () => {
-      try {
-        const faturasSalvas = await AsyncStorage.getItem(FATURAS_STORAGE_KEY);
-        const mesAnoSalvo = await AsyncStorage.getItem(MES_ANO_STORAGE_KEY);
-        
-        if (faturasSalvas) {
-          setFaturasSelecionadasState(JSON.parse(faturasSalvas));
-        }
-        
-        if (mesAnoSalvo) {
-          setMesAnoSelecionadoState(mesAnoSalvo);
-        }
-      } catch (error) {
-        console.error('[LeiturasContext] Erro ao carregar dados salvos:', error);
-      }
-    };
+  // Função para atualizar apenas uma fatura específica
+  const atualizarFaturaLocal = (faturaId: number, dados: any) => {
+    console.log(`[DEBUG] Atualizando fatura local ID ${faturaId}`, dados);
     
-    carregarDadosSalvos();
-  }, []);
-
-  // Função para salvar faturas e persistir localmente
-  const setFaturasSelecionadas = async (faturas: any[]) => {
-    try {
-      setFaturasSelecionadasState(faturas);
-      await AsyncStorage.setItem(FATURAS_STORAGE_KEY, JSON.stringify(faturas));
-    } catch (error) {
-      console.error('[LeiturasContext] Erro ao salvar faturas:', error);
-    }
-  };
-
-  // Função para salvar mês/ano e persistir localmente
-  const setMesAnoSelecionado = async (mesAno: string) => {
-    try {
-      setMesAnoSelecionadoState(mesAno);
-      await AsyncStorage.setItem(MES_ANO_STORAGE_KEY, mesAno);
-    } catch (error) {
-      console.error('[LeiturasContext] Erro ao salvar mês/ano:', error);
-    }
-  };
-
-  // Nova função para atualizar apenas uma fatura específica
-  const atualizarFaturaLocal = async (faturaId: number, dados: any) => {
-    try {
-      console.log(`[DEBUG] Atualizando fatura local ID ${faturaId}`, dados);
-      
-      // Cria uma cópia atualizada das faturas
-      const faturasAtualizadas = faturasSelecionadas.map(f => 
-        f.id === faturaId ? { ...f, ...dados } : f
-      );
-      
-      // Atualiza o estado
-      setFaturasSelecionadasState(faturasAtualizadas);
-      
-      // IMPORTANTE: Persiste no AsyncStorage
-      await AsyncStorage.setItem(FATURAS_STORAGE_KEY, JSON.stringify(faturasAtualizadas));
-      
-      console.log(`[DEBUG] Fatura ${faturaId} atualizada e salva no AsyncStorage`);
-    } catch (error) {
-      console.error('[LeiturasContext] Erro ao atualizar fatura local:', error);
-    }
+    // Cria uma cópia atualizada das faturas
+    const faturasAtualizadas = faturasSelecionadas.map(f => 
+      f.id === faturaId ? { ...f, ...dados } : f
+    );
+    
+    // Atualiza o estado
+    setFaturasSelecionadas(faturasAtualizadas);
+    
+    console.log(`[DEBUG] Fatura ${faturaId} atualizada no estado`);
   };
 
   return (

@@ -33,19 +33,27 @@ const ImagePreviewView: React.FC<ImagePreviewViewProps> = ({
     if (isVisible && imageUri) {
       console.log(`[IMAGENS] ImagePreviewView aberto com URI: ${imageUri}`);
       
-      // Verificar se o arquivo existe
+      // ✅ LÓGICA CORRIGIDA: Só verificar FileSystem se for arquivo local
+      const isRemoteUrl = imageUri.startsWith('http://') || imageUri.startsWith('https://');
+      
+      if (isRemoteUrl) {
+        console.log(`[IMAGENS] URL remota detectada - pulando verificação FileSystem`);
+        return; // URL remota - não verificar FileSystem
+      }
+      
+      // Verificar se o arquivo LOCAL existe
       FileSystem.getInfoAsync(imageUri)
         .then(fileInfo => {
-          console.log(`[IMAGENS] Verificação do arquivo: existe=${fileInfo.exists}, ${fileInfo.exists ? `tamanho=${fileInfo.size} bytes` : 'não existe'}`);
+          console.log(`[IMAGENS] Verificação do arquivo local: existe=${fileInfo.exists}, ${fileInfo.exists ? `tamanho=${fileInfo.size} bytes` : 'não existe'}`);
           
           if (!fileInfo.exists) {
-            Alert.alert("Erro", "O arquivo de imagem não foi encontrado.", [
+            Alert.alert("Erro", "O arquivo de imagem local não foi encontrado.", [
               { text: "OK", onPress: onClose }
             ]);
           }
         })
         .catch(error => {
-          console.error("[IMAGENS] Erro ao verificar arquivo:", error);
+          console.error("[IMAGENS] Erro ao verificar arquivo local:", error);
         });
     }
   }, [isVisible, imageUri]);
@@ -90,7 +98,9 @@ const ImagePreviewView: React.FC<ImagePreviewViewProps> = ({
         
         {/* Rodapé */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Imagem salva no dispositivo</Text>
+          <Text style={styles.footerText}>
+            {imageUri?.startsWith('http') ? 'Imagem do servidor' : 'Imagem salva no dispositivo'}
+          </Text>
         </View>
       </SafeAreaView>
     </Modal>

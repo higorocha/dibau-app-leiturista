@@ -19,9 +19,15 @@ import api from "../../api/axiosConfig";
 import Toast from "react-native-toast-message";
 import ImagePreviewModal from "./ImagePreviewModal";
 import CameraPermissionRequestModal from "./CameraPermissionRequestModal";
+import GalleryPermissionRequestModal from "./GalleryPermissionRequestModal";
 import ImagePreviewView from "./ImagePreviewView";
 import ImagemLeituraService from "@/src/services/ImagemLeituraService";
 import * as FileSystem from "expo-file-system";
+import SyncLoadingOverlay from "../common/SyncLoadingOverlay";
+import { database } from "../../database";
+import { Q } from "@nozbe/watermelondb";
+import Imagem, { ImageSyncStatus } from "../../database/models/Imagem";
+import FileSystemService from "../../services/FileSystemService";
 
 interface ImagemLeituraModalProps {
   isVisible: boolean;
@@ -29,7 +35,7 @@ interface ImagemLeituraModalProps {
   faturaId: number | null;
   leituraId: number | null;
   hasExistingImage: boolean;
-  onImageUploaded: (faturaId: number) => void;
+  onImageUploaded: (faturaId: number, hasImage?: boolean) => void;
 }
 
 const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
@@ -45,12 +51,20 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
   const [showPreview, setShowPreview] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [showGalleryPermissionModal, setShowGalleryPermissionModal] = useState(false);
   const [cameraPermission, setCameraPermission] = useState<boolean | null>(
     null
   );
   const [showCamera, setShowCamera] = useState(false);
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [imagePreviewUri, setImagePreviewUri] = useState<string | null>(null);
+  const [showSyncOverlay, setShowSyncOverlay] = useState(false);
+  const [syncOverlayType, setSyncOverlayType] = useState<'loading' | 'success' | 'error'>('loading');
+  const [syncOverlayTitle, setSyncOverlayTitle] = useState('');
+  const [syncOverlaySubtitle, setSyncOverlaySubtitle] = useState('');
+  const [showInternalToast, setShowInternalToast] = useState(false);
+  const [internalToastMessage, setInternalToastMessage] = useState('');
+  const [internalToastType, setInternalToastType] = useState<'error' | 'success'>('error');
 
   useEffect(() => {
     // Quando o modal é aberto e já existe uma imagem, mostrar confirmação
@@ -138,17 +152,40 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
 
   const selecionarDaGaleria = async () => {
     try {
-      const { status } =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (status !== "granted") {
-        Alert.alert(
-          "Permissão negada",
-          "Precisamos de permissão para acessar suas fotos."
-        );
-        return;
+      // Verificar se já temos permissão
+      const { status } = await ImagePicker.getMediaLibraryPermissionsAsync();
+      
+      if (status === "granted") {
+        // Já temos permissão, prosseguir direto
+        await abrirGaleria();
+      } else {
+        // Mostrar modal educativo antes de solicitar permissão
+        setShowGalleryPermissionModal(true);
       }
+    } catch (error) {
+      console.error("Erro ao verificar permissão da galeria:", error);
+      Alert.alert("Erro", "Não foi possível verificar as permissões.");
+    }
+  };
 
+  // Solicitar permissão após o usuário confirmar no modal personalizado
+  const solicitarPermissaoGaleria = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (status === "granted") {
+      setShowGalleryPermissionModal(false);
+      await abrirGaleria();
+    } else {
+      Alert.alert(
+        "Permissão Negada",
+        "Não é possível acessar a galeria sem permissão. Você pode alterar isso nas configurações do dispositivo.",
+        [{ text: "OK" }]
+      );
+    }
+  };
+
+  const abrirGaleria = async () => {
+    try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -173,6 +210,10 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
     }
   };
 
+  /**
+   * ✅ CORRIGIDO: Salva imagem localmente SEMPRE (offline-first)
+   * Upload para servidor será feito posteriormente via UploadService
+   */
   const uploadImagem = async () => {
     if (!capturedImage || !leituraId || !faturaId) {
       return;
@@ -181,96 +222,47 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
     setUploading(true);
 
     try {
-      // 1. Salvar a imagem localmente primeiro
-      const caminhoLocal = await ImagemLeituraService.salvarImagemLocal(
-        leituraId,
-        capturedImage
-      );
+      // ✅ SALVAR LOCALMENTE SEMPRE (sem verificar conexão)
+      const service = ImagemLeituraService.getInstance();
+      const result = await service.uploadImagem(capturedImage, leituraId, faturaId);
 
-      // 2. Verificar conexão para upload
-      const netInfo = await NetInfo.fetch();
-      if (!netInfo.isConnected) {
-        // Verificar se caminhoLocal não é null antes de usá-lo
-        if (caminhoLocal) {
-          // Salvar como pendente de upload
-          await ImagemLeituraService.salvarImagemPendente(
-            leituraId,
-            faturaId,
-            caminhoLocal // Agora TypeScript não vai reclamar
-          );
-          
-          onImageUploaded(faturaId);
-        } else {
-          // Tratar o caso em que salvarImagemLocal falhou
-          Alert.alert(
-            "Erro",
-            "Não foi possível salvar a imagem localmente."
-          );
-        }
-        
-        setCapturedImage(null);
-        setShowPreview(false);
-        onClose();
-        return;
-      }
-
-      // 3. Criar FormData para o upload online
-      const formData = new FormData();
-
-      // Extrair extensão e nome do arquivo
-      const extensao = capturedImage.split(".").pop()?.toLowerCase() || "jpg";
-      const nomeArquivo = `leitura_${leituraId}_${Date.now()}.${extensao}`;
-
-      // Adicionar o arquivo
-      formData.append("imagem", {
-        uri: capturedImage,
-        name: nomeArquivo,
-        type: `image/${extensao}`,
-      } as any);
-
-      // 4. Enviar para o servidor
-      const response = await api.post(
-        `/leituras/${leituraId}/imagem`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      );
-
-      if (response.status === 200) {
-        onImageUploaded(faturaId);
+      if (result.success) {
+        onImageUploaded(faturaId, true); // Imagem foi ADICIONADA
 
         Toast.show({
           type: "success",
-          text1: "Imagem salva com sucesso!",
-          text2: "Imagem salva localmente e enviada ao servidor",
+          text1: "Imagem salva localmente!",
+          text2: "Use o botão de upload na tela principal para enviar ao servidor",
           position: "bottom",
-          visibilityTime: 2000,
+          visibilityTime: 3000,
         });
-      }
 
-      setCapturedImage(null);
-      setShowPreview(false);
-      onClose();
+        setCapturedImage(null);
+        setShowPreview(false);
+        onClose();
+      } else {
+        Alert.alert(
+          "Erro ao salvar",
+          result.error || "Não foi possível salvar a imagem localmente. Tente novamente.",
+          [{ text: "OK" }]
+        );
+      }
     } catch (error) {
-      console.error("Erro ao processar imagem:", error);
-      // Mesmo com erro no upload, a imagem já está salva localmente
+      console.error("[UPLOAD] Erro ao processar imagem:", error);
       Alert.alert(
-        "Atenção",
-        "Não foi possível enviar a imagem para o servidor, mas ela foi salva no dispositivo. Tente sincronizar novamente quando houver conexão."
+        "Erro",
+        "Ocorreu um erro inesperado ao salvar a imagem. Tente novamente.",
+        [{ text: "OK" }]
       );
-      onImageUploaded(faturaId);
-      setCapturedImage(null);
-      setShowPreview(false);
-      onClose();
     } finally {
       setUploading(false);
     }
   };
 
-  // Função visualizarImagemExistente modificada
+  /**
+   * ✅ CORRIGIDO: Visualizar imagem (local primeiro, depois servidor se online)
+   * Funciona offline para imagens já capturadas localmente
+   */
   const visualizarImagemExistente = async () => {
     if (!leituraId || !faturaId) {
       console.log("[IMAGENS] Erro: leituraId ou faturaId não definidos");
@@ -281,108 +273,44 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
       console.log(
         `[IMAGENS] Iniciando visualização da imagem para leitura ID: ${leituraId}`
       );
-      setUploading(true); // Mostrar indicador de carregamento
+      setUploading(true);
 
-      // 1. Verificar se a imagem existe localmente
-      let caminhoLocal = await ImagemLeituraService.obterCaminhoImagemLocal(
-        leituraId
-      );
-      console.log(
-        `[IMAGENS] Caminho local: ${caminhoLocal || "não encontrado"}`
-      );
+      Toast.show({
+        type: "info",
+        text1: "Carregando imagem...",
+        text2: "Buscando imagem local ou do servidor",
+        position: "bottom",
+        visibilityTime: 1500,
+      });
 
-      // 2. Se não existir localmente, tentar baixar do servidor
-      if (!caminhoLocal) {
-        const netInfo = await NetInfo.fetch();
+      // ✅ BUSCAR IMAGEM (local primeiro, servidor depois se necessário)
+      const service = ImagemLeituraService.getInstance();
+      const urlImagem = await service.obterUrlImagem(leituraId);
 
-        if (netInfo.isConnected) {
-          console.log(
-            "[IMAGENS] Não encontrado localmente, tentando baixar do servidor..."
-          );
-          Toast.show({
-            type: "info",
-            text1: "Baixando imagem...",
-            text2: "Aguarde enquanto baixamos a imagem do servidor",
-            position: "bottom",
-            visibilityTime: 2000,
-          });
+      if (urlImagem) {
+        console.log(`[IMAGENS] URL obtida: ${urlImagem}`);
 
-          // Tentar baixar a imagem (com a nova lógica que consulta a API diretamente)
-          caminhoLocal = await ImagemLeituraService.baixarImagem(leituraId);
-          console.log(
-            `[IMAGENS] Download concluído, caminho: ${
-              caminhoLocal || "falha no download"
-            }`
-          );
-        } else {
-          console.log(
-            "[IMAGENS] Sem conexão e imagem não disponível localmente"
-          );
-          Alert.alert(
-            "Sem conexão",
-            "Você está offline e a imagem não está disponível no dispositivo."
-          );
-          setUploading(false);
-          return;
-        }
-      }
-
-      // 3. Se conseguimos obter a imagem, exibir
-      if (caminhoLocal) {
-        console.log(
-          `[IMAGENS] Preparando para exibir imagem de: ${caminhoLocal}`
-        );
-
-        // Verificar se o arquivo realmente existe
-        const fileInfo = await FileSystem.getInfoAsync(caminhoLocal);
-        if (!fileInfo.exists) {
-          console.log(
-            `[IMAGENS] ERRO: Arquivo não existe apesar do caminho ser válido`
-          );
-          Alert.alert(
-            "Erro",
-            "Arquivo de imagem não encontrado no dispositivo."
-          );
-          setUploading(false);
-          return;
-        }
-
-        console.log(
-          `[IMAGENS] Arquivo existe, tamanho: ${fileInfo.size} bytes`
-        );
-
-        // Importante: Fechar qualquer modal que esteja aberto antes de mostrar o preview
+        // Fechar modal de confirmação
         setShowConfirmOverwrite(false);
 
-        // Pequeno timeout para garantir que o primeiro modal foi fechado
-
-        setImagePreviewUri(caminhoLocal);
+        // Exibir imagem
+        setImagePreviewUri(urlImagem);
         setShowImagePreview(true);
-        console.log(
-          "[IMAGENS] Estados atualizados: showImagePreview=true, uri definido"
-        );
         setUploading(false);
       } else {
-        console.log(
-          "[IMAGENS] Não foi possível obter a imagem de nenhuma fonte"
-        );
-        Alert.alert(
-          "Erro",
-          "Não foi possível carregar a imagem. Tente novamente mais tarde."
-        );
+        console.log("[IMAGENS] Nenhuma imagem encontrada");
+        
+        // ✅ MENSAGEM MAIS CLARA: Pode ser por estar offline OU por não ter imagem
+        const netInfo = await NetInfo.fetch();
+        const mensagem = !netInfo.isConnected 
+          ? "Nenhuma imagem local encontrada. Conecte-se à internet para buscar imagens do servidor."
+          : "Nenhuma imagem encontrada para esta leitura.";
+          
+        Alert.alert("Imagem não encontrada", mensagem, [{ text: "OK" }]);
         setUploading(false);
       }
     } catch (error) {
       console.error("[IMAGENS] Erro ao visualizar imagem:", error);
-      // Log mais detalhado para diagnóstico
-      if (error instanceof Error) {
-        console.error(
-          "[IMAGENS] Erro detalhado:",
-          error.name,
-          error.message,
-          error.stack
-        );
-      }
 
       Toast.show({
         type: "error",
@@ -405,6 +333,245 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
     setShowPreview(false);
   };
 
+  /**
+   * Verifica o status de sincronização de uma imagem
+   * @param leituraId ID da leitura para verificar
+   * @returns Promise com o status da imagem ou null se não encontrada
+   */
+  const verificarStatusImagem = async (leituraId: number): Promise<ImageSyncStatus | null> => {
+    try {
+      const imagensCollection = database.get('imagens');
+      
+      // Buscar imagem pela leitura_server_id (faturaId)
+      const imagens = await imagensCollection
+        .query(Q.where('leitura_server_id', leituraId))
+        .fetch();
+
+      if (imagens.length > 0) {
+        return (imagens[0] as any).syncStatus as ImageSyncStatus;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('[IMAGENS] Erro ao verificar status da imagem:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Mostra toast interno dentro do modal
+   */
+  const showInternalToastMessage = (message: string, type: 'error' | 'success' = 'error') => {
+    setInternalToastMessage(message);
+    setInternalToastType(type);
+    setShowInternalToast(true);
+    
+    // Auto-hide após 3 segundos
+    setTimeout(() => {
+      setShowInternalToast(false);
+    }, 3000);
+  };
+
+  /**
+   * Exclui imagem SOMENTE LOCAL (sem tentar excluir do servidor)
+   * @param leituraId ID da leitura cuja imagem será excluída
+   * @returns Promise com o resultado da exclusão
+   */
+  const excluirImagemLocal = async (leituraId: number): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const imagensCollection = database.get('imagens');
+      const leiturasCollection = database.get('leituras');
+
+      // 1. Buscar imagem local
+      const imagensLocais = await imagensCollection
+        .query(Q.where('leitura_server_id', leituraId))
+        .fetch();
+
+      // 2. Excluir arquivo local do FileSystem
+      if (imagensLocais.length > 0 && (imagensLocais[0] as any).localUri) {
+        await FileSystemService.deleteImage((imagensLocais[0] as any).localUri);
+        console.log(`🗑️ Imagem local excluída do FileSystem`);
+      }
+
+      // 3. Excluir do WatermelonDB
+      await database.write(async () => {
+        for (const imagem of imagensLocais) {
+          await imagem.markAsDeleted();
+        }
+
+        // Desmarcar leitura como tendo imagem local
+        const leituras = await leiturasCollection
+          .query(Q.where('server_id', leituraId))
+          .fetch();
+
+        if (leituras.length > 0) {
+          await leituras[0].update((record: any) => {
+            record.hasLocalImage = false;
+          });
+        }
+      });
+
+      console.log(`✅ Imagem local excluída com sucesso (ID: ${leituraId})`);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[IMAGENS] Erro ao excluir imagem local:', error);
+      return {
+        success: false,
+        error: error.message || 'Erro ao excluir imagem local'
+      };
+    }
+  };
+
+  /**
+   * Lida com a solicitação de exclusão de imagem
+   * Verifica o status e permite exclusão apenas se não foi sincronizada
+   */
+  const handleExcluirImagem = () => {
+    if (!leituraId || !faturaId) {
+      console.error('[IMAGENS] leituraId ou faturaId não definidos para exclusão');
+      return;
+    }
+
+    console.log(`[IMAGENS] Iniciando processo de exclusão para fatura ${faturaId}`);
+    
+    // Mostrar loading overlay (mantém modal de confirmação aberto)
+    setShowSyncOverlay(true);
+    setSyncOverlayType('loading');
+    setSyncOverlayTitle('Verificando imagem...');
+    setSyncOverlaySubtitle('Aguarde um momento');
+
+    // Pequeno delay para garantir que o overlay apareça
+    setTimeout(async () => {
+      try {
+
+        // Verificar status da imagem local
+        const statusImagemLocal = await verificarStatusImagem(faturaId);
+        console.log(`[IMAGENS] Status da imagem local: ${statusImagemLocal}`);
+
+        // Verificar se existe imagem online (na tabela leituras)
+        const leiturasCollection = database.get('leituras');
+        const leituras = await leiturasCollection
+          .query(Q.where('server_id', faturaId))
+          .fetch();
+
+        let existeImagemOnline = false;
+        if (leituras.length > 0) {
+          const leituraData = leituras[0] as any;
+          existeImagemOnline = !!leituraData.imagemUrl;
+        }
+
+        console.log(`[IMAGENS] Existe imagem online: ${existeImagemOnline}`);
+
+        // LÓGICA CONFORME ESPECIFICADO:
+        if (!statusImagemLocal && existeImagemOnline) {
+          // Não existe local, mas existe online -> não pode excluir
+          setShowSyncOverlay(false); // Fechar overlay
+          
+          showInternalToastMessage(
+            "Esta imagem já foi enviada ao servidor e não pode ser excluída, apenas alterada.",
+            'error'
+          );
+          return;
+        }
+
+        if (!statusImagemLocal && !existeImagemOnline) {
+          // Não existe nem local nem online - erro
+          setShowSyncOverlay(false); // Fechar overlay
+          
+          Toast.show({
+            type: "error",
+            text1: "Imagem não encontrada",
+            text2: "Não foi possível localizar a imagem para exclusão",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
+          return;
+        }
+
+        if (statusImagemLocal === 'synced') {
+          // Existe local mas já foi transmitida -> não pode excluir
+          setShowSyncOverlay(false); // Fechar overlay
+          
+          showInternalToastMessage(
+            "Esta imagem já foi enviada ao servidor e não pode ser excluída, apenas alterada.",
+            'error'
+          );
+          return;
+        }
+
+        // Existe local e não foi transmitida ('uploading' ou 'error') - PODE EXCLUIR
+        console.log(`[IMAGENS] Imagem local com status '${statusImagemLocal}' pode ser excluída - iniciando exclusão...`);
+        
+        setSyncOverlayTitle('Excluindo imagem...');
+        setSyncOverlaySubtitle('Removendo arquivo local');
+
+        // Excluir imagem SOMENTE LOCAL (não do servidor)
+        const result = await excluirImagemLocal(faturaId);
+
+        if (result.success) {
+          // Sucesso na exclusão - fechar overlay e modal imediatamente
+          setShowSyncOverlay(false);
+          setShowConfirmOverwrite(false);
+          onClose();
+
+          // Verificar se ainda existe imagem do servidor (imagemUrl na tabela leituras)
+          const leiturasCollection = database.get('leituras');
+          const leituras = await leiturasCollection
+            .query(Q.where('server_id', faturaId))
+            .fetch();
+
+          let aindaTemImagemServidor = false;
+          if (leituras.length > 0) {
+            const leituraData = leituras[0] as any;
+            aindaTemImagemServidor = !!leituraData.imagemUrl;
+          }
+
+          // Se ainda tem imagemUrl do servidor, mantém hasImage = true
+          // Se não tem, define como false
+          onImageUploaded(faturaId, aindaTemImagemServidor);
+
+          console.log(`[IMAGENS] Imagem local excluída. Ainda tem no servidor: ${aindaTemImagemServidor}`);
+
+          // Toast de sucesso
+          Toast.show({
+            type: "success",
+            text1: "Imagem excluída",
+            text2: aindaTemImagemServidor 
+              ? "Imagem local removida. Imagem do servidor disponível para visualização."
+              : "A imagem foi removida com sucesso",
+            position: "bottom",
+            visibilityTime: 2000,
+          });
+
+        } else {
+          // Erro na exclusão
+          setShowSyncOverlay(false); // Fechar overlay
+          
+          Toast.show({
+            type: "error",
+            text1: "Erro ao excluir",
+            text2: result.error || 'Não foi possível excluir a imagem',
+            position: "bottom",
+            visibilityTime: 3000,
+          });
+        }
+
+      } catch (error: any) {
+        console.error('[IMAGENS] Erro inesperado ao excluir imagem:', error);
+        
+        setShowSyncOverlay(false); // Fechar overlay
+        
+        Toast.show({
+          type: "error",
+          text1: "Erro inesperado",
+          text2: "Ocorreu um erro ao processar a exclusão",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+      }
+    }, 50); // Pequeno delay para garantir que o overlay apareça
+  };
+
   return (
     <>
       <Modal
@@ -413,7 +580,8 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
           !showPreview &&
           !showConfirmOverwrite &&
           !showPermissionModal &&
-          !showImagePreview
+          !showImagePreview &&
+          !showSyncOverlay
         }
         transparent={true}
         animationType="slide"
@@ -468,6 +636,14 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
       >
         <View style={styles.modalContainer}>
           <View style={styles.confirmDialog}>
+            {/* Botão X no cabeçalho para fechar */}
+            <TouchableOpacity
+              style={styles.confirmCloseButton}
+              onPress={onClose}
+            >
+              <Ionicons name="close" size={24} color="#666" />
+            </TouchableOpacity>
+
             <Text style={styles.confirmTitle}>Imagem já existente</Text>
             <Text style={styles.confirmText}>
               Já existe uma imagem para esta leitura. O que deseja fazer?
@@ -478,7 +654,7 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
                 style={[styles.confirmButton, { backgroundColor: "#2a9d8f" }]}
                 onPress={visualizarImagemExistente}
               >
-                {/* Substituir texto por ícone de olhos */}
+                {/* Ícone de olhos para visualizar */}
                 <Ionicons name="eye-outline" size={24} color="#fff" />
               </TouchableOpacity>
 
@@ -486,18 +662,27 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
                 style={[styles.confirmButton, { backgroundColor: "#f4a261" }]}
                 onPress={handleConfirmOverwrite}
               >
-                {/* Substituir texto por ícone de setas em direções contrárias */}
+                {/* Ícone de sync para substituir */}
                 <Ionicons name="sync-outline" size={24} color="#fff" />
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.confirmButton, { backgroundColor: "#e63946" }]}
-                onPress={onClose}
+                onPress={handleExcluirImagem}
               >
-                {/* Substituir texto por ícone X */}
-                <Ionicons name="close-outline" size={24} color="#fff" />
+                {/* Ícone de lixeira para excluir */}
+                <Ionicons name="trash-outline" size={24} color="#fff" />
               </TouchableOpacity>
             </View>
+
+            {/* Botão Fechar na parte inferior */}
+            <TouchableOpacity
+              style={styles.confirmCancelButton}
+              onPress={onClose}
+            >
+              <Text style={styles.confirmCancelText}>Fechar</Text>
+            </TouchableOpacity>
+
           </View>
         </View>
       </Modal>
@@ -525,6 +710,41 @@ const ImagemLeituraModal: React.FC<ImagemLeituraModalProps> = ({
         onRequestPermission={solicitarPermissaoCamera}
         onCancel={() => setShowPermissionModal(false)}
       />
+
+      <GalleryPermissionRequestModal
+        isVisible={showGalleryPermissionModal}
+        onRequestPermission={solicitarPermissaoGaleria}
+        onCancel={() => setShowGalleryPermissionModal(false)}
+      />
+
+      {/* Overlay de sincronização para exclusão - renderizado por último para ficar na frente */}
+      {showSyncOverlay && (
+        <SyncLoadingOverlay
+          visible={showSyncOverlay}
+          type={syncOverlayType}
+          title={syncOverlayTitle}
+          subtitle={syncOverlaySubtitle}
+          iconName={syncOverlayType === 'error' ? 'alert-circle' : undefined}
+        />
+      )}
+
+      {/* Toast na base da tela - fora dos modais */}
+      {showInternalToast && (
+        <View style={styles.screenToast}>
+          <View style={[
+            styles.internalToastContent,
+            { backgroundColor: internalToastType === 'error' ? '#e63946' : '#28a745' }
+          ]}>
+            <Ionicons 
+              name={internalToastType === 'error' ? 'alert-circle' : 'checkmark-circle'} 
+              size={20} 
+              color="#fff" 
+              style={styles.internalToastIcon}
+            />
+            <Text style={styles.internalToastText}>{internalToastMessage}</Text>
+          </View>
+        </View>
+      )}
     </>
   );
 };
@@ -577,6 +797,19 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
     borderRadius: 10,
     padding: 20,
+    position: "relative",
+  },
+  confirmCloseButton: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#f0f0f0",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1,
   },
   confirmTitle: {
     fontSize: 18,
@@ -605,6 +838,50 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     color: "white",
     fontWeight: "bold",
+  },
+  confirmCancelButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    backgroundColor: "#f0f0f0",
+    alignItems: "center",
+    alignSelf: "center",
+    minWidth: 120,
+  },
+  confirmCancelText: {
+    color: "#666",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  screenToast: {
+    position: "absolute",
+    bottom: 50,
+    left: 20,
+    right: 20,
+    zIndex: 9999,
+  },
+  internalToastContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  internalToastIcon: {
+    marginRight: 8,
+  },
+  internalToastText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "500",
+    flex: 1,
+    lineHeight: 18,
   },
 });
 

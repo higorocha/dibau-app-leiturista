@@ -275,51 +275,7 @@ const CulturasModal: React.FC<CulturasModalProps> = ({
     setIsAddingNew(false);
   };
 
-  // Função auxiliar para salvar offline
-  const saveOffline = async (culturasFormatadas: any[]) => {
-    if (!lote) return;
-
-    try {
-      // Buscar dados pendentes existentes
-      const pendingDataStr =
-        (await AsyncStorage.getItem("pendingCulturasUpdates")) || "{}";
-      const pendingData = JSON.parse(pendingDataStr);
-
-      // Adicionar/atualizar este lote com formato melhorado incluindo IDs excluídos
-      pendingData[lote.id] = {
-        loteId: lote.id,
-        culturas: culturasFormatadas,
-        deletedCultureIds: deletedCultureIds,
-        timestamp: new Date().toISOString(),
-      };
-
-      // Salvar no AsyncStorage
-      await AsyncStorage.setItem(
-        "pendingCulturasUpdates",
-        JSON.stringify(pendingData)
-      );
-
-      showModalToast(
-        "Alterações salvas localmente. Serão sincronizadas quando houver conexão.",
-        "info"
-      );
-
-      // Chamar callback para atualizar dados na tela principal com flag de pendente
-      // Passando tanto as culturas atualizadas quanto os IDs excluídos
-      onSave(
-        culturasLote
-          .filter((c) => !c.isDeleted)
-          .map((c) => ({ ...c, isPending: true })),
-        deletedCultureIds
-      );
-
-      // Fechar modal
-      onClose();
-    } catch (storageError) {
-      console.error("Erro ao salvar dados offline:", storageError);
-      Alert.alert("Erro", "Não foi possível salvar os dados offline.");
-    }
-  };
+  // Funcionalidade offline removida
 
   // Função para salvar todas as alterações
   const handleSaveChanges = async () => {
@@ -361,21 +317,7 @@ const CulturasModal: React.FC<CulturasModalProps> = ({
         });
 
         // Verificar pendências existentes e removê-las
-        try {
-          const pendingDataStr =
-            (await AsyncStorage.getItem("pendingCulturasUpdates")) || "{}";
-          const pendingData = JSON.parse(pendingDataStr);
-
-          if (pendingData[lote.id]) {
-            delete pendingData[lote.id];
-            await AsyncStorage.setItem(
-              "pendingCulturasUpdates",
-              JSON.stringify(pendingData)
-            );
-          }
-        } catch (e) {
-          console.error("Erro ao limpar pendências:", e);
-        }
+        // Funcionalidade offline removida
 
         Toast.show({
             type: 'success',
@@ -399,12 +341,13 @@ const CulturasModal: React.FC<CulturasModalProps> = ({
           "Ocorreu um erro ao atualizar as culturas. Salvando localmente..."
         );
 
-        // Se falhar online, salvar offline
-        await saveOffline(culturasFormatadas);
+        // Funcionalidade offline removida - mostrar erro
+        showModalToast("Erro ao salvar. Verifique sua conexão.", "error");
       }
     } else {
-      // MODO OFFLINE: Salvar localmente
-      await saveOffline(culturasFormatadas);
+      // MODO OFFLINE removido - mostrar erro
+      showModalToast("Sem conexão. Conecte-se à internet para salvar.", "error");
+      return;
     }
 
     setLoading(false);

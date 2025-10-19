@@ -4,16 +4,44 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import LoggerService from '../services/LoggerService';
 
-// Configuração de ambientes
-type Environment = 'development' | 'production' | 'test';
-const currentEnv: Environment = 'production'; // Mudado para development
+// ========================================
+// 🔧 CONFIGURAÇÃO DE AMBIENTES
+// ========================================
+type Environment = 'development' | 'preview' | 'production';
 
-// URLs para cada ambiente
+// ⚙️ ALTERE AQUI O AMBIENTE ATUAL:
+// - 'development': Rede local (192.168.1.144:5001)
+// - 'preview': Ngrok para testes externos
+// - 'production': Servidor de produção (Render)
+const currentEnv: Environment = 'development';
+
+// 🌐 URLs para cada ambiente
 const config = {
-  development: 'http://192.168.88.23:5001', // IP atualizado conforme solicitado
-  production: 'https://sistema-irrigacao-backend.onrender.com',
-  test: 'http://localhost:5001'
+  // Desenvolvimento: Rede local
+  development: 'http://192.168.1.144:5001',
+
+  // Preview: Ngrok (URL ativa)
+  preview: 'https://reissuable-oda-conscionably.ngrok-free.dev',
+
+  // Produção: Servidor Render
+  production: 'https://sistema-irrigacao-backend.onrender.com'
 };
+
+// Configurações de segurança
+const SECURITY_CONFIG = {
+  // Tamanho máximo de resposta em bytes (10MB)
+  MAX_RESPONSE_SIZE: 10 * 1024 * 1024,
+  // Tamanho máximo de request em bytes (5MB)
+  MAX_REQUEST_SIZE: 5 * 1024 * 1024,
+  // Tamanho máximo de URI data: em bytes (1MB)
+  MAX_DATA_URI_SIZE: 1 * 1024 * 1024,
+  // Timeout padrão em ms
+  DEFAULT_TIMEOUT: 60000,
+};
+
+// 📢 Log do ambiente ativo
+console.log(`\n🌍 [AXIOS CONFIG] Ambiente ativo: ${currentEnv.toUpperCase()}`);
+console.log(`🔗 [AXIOS CONFIG] Base URL: ${config[currentEnv]}\n`);
 
 // Criar instância do axios
 const api = axios.create({
@@ -21,8 +49,48 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 60000, // Aumentar timeout para 60 segundos
+  timeout: SECURITY_CONFIG.DEFAULT_TIMEOUT,
+  // Limitar tamanho máximo de conteúdo
+  maxContentLength: SECURITY_CONFIG.MAX_RESPONSE_SIZE,
+  maxBodyLength: SECURITY_CONFIG.MAX_REQUEST_SIZE,
 });
+
+// Função auxiliar para validar e sanitizar dados
+const validateRequestData = (config: any): void => {
+  // Validação 1: Verificar URIs data: maliciosas
+  if (config.url && config.url.startsWith('data:')) {
+    const dataUriSize = config.url.length;
+    if (dataUriSize > SECURITY_CONFIG.MAX_DATA_URI_SIZE) {
+      throw new Error(
+        `URI data: excede o tamanho máximo permitido (${dataUriSize} bytes > ${SECURITY_CONFIG.MAX_DATA_URI_SIZE} bytes)`
+      );
+    }
+  }
+
+  // Validação 2: Verificar tamanho do body da requisição
+  if (config.data) {
+    const dataSize = JSON.stringify(config.data).length;
+    if (dataSize > SECURITY_CONFIG.MAX_REQUEST_SIZE) {
+      throw new Error(
+        `Dados da requisição excedem o tamanho máximo permitido (${dataSize} bytes > ${SECURITY_CONFIG.MAX_REQUEST_SIZE} bytes)`
+      );
+    }
+  }
+
+  // Validação 3: Verificar se há URIs data: em parâmetros
+  if (config.params) {
+    for (const [key, value] of Object.entries(config.params)) {
+      if (typeof value === 'string' && value.startsWith('data:')) {
+        const dataUriSize = value.length;
+        if (dataUriSize > SECURITY_CONFIG.MAX_DATA_URI_SIZE) {
+          throw new Error(
+            `Parâmetro '${key}' com URI data: excede o tamanho máximo permitido`
+          );
+        }
+      }
+    }
+  }
+};
 
 // Interceptor para adicionar token e logs de requisição
 api.interceptors.request.use(
@@ -30,6 +98,9 @@ api.interceptors.request.use(
     try {
       // Log da requisição
       console.log(`[API] Enviando requisição para: ${config.method?.toUpperCase()} ${config.url}`);
+      
+      // ✅ VALIDAÇÃO DE SEGURANÇA: Verificar dados antes de enviar
+      validateRequestData(config);
       
       // Verificar conectividade antes de enviar
       const netInfo = await NetInfo.fetch();
@@ -83,30 +154,98 @@ api.interceptors.request.use(
   }
 );
 
+// Função auxiliar para validar dados de resposta
+const validateResponseData = (response: any): void => {
+  // Validação 1: Verificar tamanho da resposta
+  if (response.data) {
+    try {
+      const responseSize = JSON.stringify(response.data).length;
+      if (responseSize > SECURITY_CONFIG.MAX_RESPONSE_SIZE) {
+        console.warn(
+          `[API SECURITY] Resposta excede o tamanho máximo permitido: ${responseSize} bytes`
+        );
+        // Logar o aviso mas não bloquear (já foi baixado)
+      }
+    } catch (error) {
+      // Se não for JSON serializável, não há problema
+      console.log('[API] Resposta não é JSON serializável, pulando validação de tamanho');
+    }
+  }
+
+  // Validação 2: Verificar URIs data: na resposta
+  if (response.data && typeof response.data === 'object') {
+    const checkDataUris = (obj: any, path = ''): void => {
+      for (const [key, value] of Object.entries(obj)) {
+        const currentPath = path ? `${path}.${key}` : key;
+        
+        if (typeof value === 'string' && value.startsWith('data:')) {
+          const dataUriSize = value.length;
+          if (dataUriSize > SECURITY_CONFIG.MAX_DATA_URI_SIZE) {
+            console.warn(
+              `[API SECURITY] URI data: no campo '${currentPath}' excede o tamanho máximo: ${dataUriSize} bytes`
+            );
+          }
+        } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+          checkDataUris(value, currentPath);
+        } else if (Array.isArray(value)) {
+          value.forEach((item, index) => {
+            if (item && typeof item === 'object') {
+              checkDataUris(item, `${currentPath}[${index}]`);
+            }
+          });
+        }
+      }
+    };
+    
+    checkDataUris(response.data);
+  }
+};
+
 // Interceptor para tratar erros e logs de resposta
 api.interceptors.response.use(
   async (response) => {
     console.log(`[API] Resposta recebida de ${response.config.url}, status: ${response.status}`);
+    
+    // ✅ VALIDAÇÃO DE SEGURANÇA: Verificar dados recebidos
+    try {
+      validateResponseData(response);
+    } catch (error) {
+      console.error('[API SECURITY] Erro ao validar resposta:', error);
+    }
     
     // REMOVIDO: Log de debug de respostas bem-sucedidas
     
     return response;
   },
   async (error) => {
-    // Log detalhado do erro
-    console.error('[API] Erro na requisição:', error.message);
-    
     // Preparar dados para log estruturado
     const logger = LoggerService.getInstance();
     const requestUrl = error.config?.url || '';
     const statusCode = error.response?.status;
     const networkInfo = await NetInfo.fetch().catch(() => null);
-    
+
+    // Verificar se é um erro 404 esperado (verificação de imagem)
+    const isExpected404 =
+      statusCode === 404 &&
+      requestUrl.includes('/leituras/') &&
+      requestUrl.includes('/imagem') &&
+      error.config?.method?.toLowerCase() === 'get';
+
+    // Não logar erros 404 esperados na verificação de imagens
+    if (isExpected404) {
+      // Apenas log silencioso para debug, não para erro
+      console.log(`[API] Imagem não encontrada (esperado): ${requestUrl}`);
+      return Promise.reject(error);
+    }
+
+    // Log detalhado do erro
+    console.error('[API] Erro na requisição:', error.message);
+
     // Verificar tipo de erro e fazer log apropriado
     if (error.response) {
       // A requisição foi feita e o servidor respondeu com status diferente de 2xx
       console.error(`[API] Erro de resposta: status ${error.response.status}, URL: ${error.config?.url}`);
-      
+
       await logger.error(
         `Erro HTTP ${statusCode}: ${error.config?.method?.toUpperCase()} ${requestUrl}`,
         `Servidor respondeu com erro ${statusCode}`,

@@ -1,252 +1,593 @@
-// src/services/SyncService.ts - Versão modificada com suporte a progresso
+import { database } from '../database';
+import { Q } from '@nozbe/watermelondb';
+import axios from '../api/axiosConfig';
+import Leitura from '../database/models/Leitura';
+import Observacao from '../database/models/Observacao';
+import ObservacaoComentario from '../database/models/ObservacaoComentario';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import NetInfo from "@react-native-community/netinfo";
-import api from "../api/axiosConfig";
-import Toast from "react-native-toast-message";
-import LoggerService from "./LoggerService";
-
-interface SyncProgressCallbacks {
-  onProgress?: (processed: number, total: number) => void;
-  onStart?: (total: number) => void;
-  onComplete?: (success: boolean, syncedCount: number) => void;
-  onCancel?: () => void;
-  specificIds?: string[]; // Novo parâmetro para filtrar IDs específicos
+interface FaturaMes {
+  mesAno: string; // Campo mudou de mes/ano separados para mesAno
+  quantidadeLeituras?: number;
+  valorTotal?: number;
+  valorMonetario?: number;
+  valorParteFixa?: number;
+  volumeTotal?: number;
+  dataCriacao?: string;
+  leiturasInformadas?: number;
+  totalLeituras?: number;
+  faturas: any[]; // Campo mudou de leituras para faturas
+  isAllFechada: boolean; // Campo mudou de fechada string para isAllFechada boolean
 }
 
-// Variável para controlar cancelamento
-let syncCancelled = false;
-
-// Função para sincronizar leituras pendentes
-export const syncPendingLeituras = async (callbacks?: SyncProgressCallbacks): Promise<{success: boolean, syncedCount: number}> => {
-  try {
-    // Resetar estado de cancelamento
-    syncCancelled = false;
-    
-    // Verificar se há conexão
-    const netInfo = await NetInfo.fetch();
-    if (!netInfo.isConnected) {
-      console.log('Sem conexão, não é possível sincronizar');
+class SyncService {
+  /**
+   * Sincronizar apenas um mês específico
+   */
+  async syncMesEspecifico(mesAno: string): Promise<{ success: boolean; mensagem: string }> {
+    try {
+      const [mes, ano] = mesAno.split('/');
       
-      // Log de erro de conectividade
-      await LoggerService.getInstance().logSync('sync_no_network', false, { 
-        network_state: netInfo.type,
-        operation: 'leituras_sync'
+      // Buscar apenas o mês específico do servidor
+      const response = await axios.get('/faturamensal/app/leituras', {
+        params: { mes, ano }
       });
       
-      return { success: false, syncedCount: 0 };
-    }
-    
-    // Buscar atualizações pendentes
-    const pendingDataStr = await AsyncStorage.getItem('pendingLeituraUpdates');
-    if (!pendingDataStr) {
-      console.log('Nenhuma atualização pendente');
-      return { success: true, syncedCount: 0 };
-    }
-    
-    const pendingData = JSON.parse(pendingDataStr);
-    let pendingIds = Object.keys(pendingData);
-    
-    // NOVO: Filtrar por IDs específicos se fornecidos
-    if (callbacks?.specificIds) {
-      const specificIds = callbacks.specificIds;
-      if (specificIds.length > 0) {
-        pendingIds = pendingIds.filter(id => specificIds.includes(id));
-        console.log(`Filtrando para sincronizar apenas ${pendingIds.length} IDs específicos`);
+      if (!response.data || !response.data.success) {
+        return { success: false, mensagem: response.data?.message || 'Erro na resposta da API' };
       }
-    }
-    
-    if (pendingIds.length === 0) {
-      return { success: true, syncedCount: 0 };
-    }
-    
-    console.log(`Sincronizando ${pendingIds.length} leituras pendentes`);
-    
-    // Chamar callback de início, se existir
-    if (callbacks?.onStart) {
-      callbacks.onStart(pendingIds.length);
-    }
-    
-    // Para cada atualização pendente, enviar para a API
-    let syncedCount = 0;
-    const newPendingData = { ...pendingData };
-    const syncStatusData = await AsyncStorage.getItem('pendingLeiturasSyncs') || '{}';
-    const syncStatus = JSON.parse(syncStatusData);
-    
-    // Processar em lotes de 10 para melhor desempenho
-    const BATCH_SIZE = 10;
-    const totalBatches = Math.ceil(pendingIds.length / BATCH_SIZE);
 
-    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-      // Verificar cancelamento a cada lote
-      if (syncCancelled) {
-        console.log('Sincronização cancelada pelo usuário');
-        
-        // REMOVIDO: Log de cancelamento (operação normal do usuário)
-        
-        if (callbacks?.onCancel) {
-          callbacks.onCancel();
-        }
-        return { success: false, syncedCount };
+      const faturasMeses: FaturaMes[] = response.data.data || [];
+
+      if (faturasMeses.length === 0) {
+        return { success: false, mensagem: `Nenhuma fatura encontrada para ${mesAno}` };
       }
-      
-      // Obter o lote atual
-      const startIdx = batchIndex * BATCH_SIZE;
-      const endIdx = Math.min(startIdx + BATCH_SIZE, pendingIds.length);
-      const batchIds = pendingIds.slice(startIdx, endIdx);
-      
-      // Processar o lote em sequência para evitar sobrecarga do servidor
-      for (const id of batchIds) {
-        // Verificar se a sincronização foi cancelada
-        if (syncCancelled) {
-          console.log('Sincronização cancelada pelo usuário');
-          
-          // REMOVIDO: Log de cancelamento no meio do processo (operação normal)
-          
-          if (callbacks?.onCancel) {
-            callbacks.onCancel();
-          }
-          return { success: false, syncedCount };
-        }
-        
-        const update = pendingData[id];
-        
-        try {
-          // Pequeno atraso para permitir atualização da UI entre itens
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
-          // Enviar para a API
-          await api.put(`/faturamensal/app/atualizar-leitura/${id}`, {
-            leitura: update.leitura,
-            data_leitura: update.data_leitura,
-          });
-          
-          // Remover do objeto de pendentes
-          delete newPendingData[id];
-          delete syncStatus[id];
-          syncedCount++;
-          
-          // REMOVIDO: Log de sucesso individual (sucesso normal)
-          
-          // Chamar callback de progresso, se existir
-          if (callbacks?.onProgress) {
-            callbacks.onProgress(syncedCount, pendingIds.length);
-          }
-        } catch (error) {
-          console.error(`Erro ao sincronizar leitura ${id}:`, error);
-          
-          // Log de erro individual
-          await LoggerService.getInstance().logSync('sync_item_error', false, { 
-            fatura_id: id,
-            leitura: update.leitura,
-            data_leitura: update.data_leitura,
-            error_message: (error as any)?.message,
-            error_status: (error as any)?.response?.status,
-            progress: `${syncedCount}/${pendingIds.length}`,
-            operation: 'leituras_sync'
-          });
-          
-          // Manter na lista de pendentes para tentar novamente depois
-        }
+
+      const faturaMes = faturasMeses[0]; // Deve ter apenas 1 resultado
+
+      // Salvar no WatermelonDB (se aberta) ou cache (se fechada)
+      if (faturaMes.isAllFechada === false) {
+        await this.saveFaturasAbertasToWatermelon([faturaMes]);
+      } else {
+        await this.saveFaturasFechadasToCache([faturaMes]);
       }
+
+      const qtdFaturas = faturaMes.faturas?.length || 0;
+      return {
+        success: true,
+        mensagem: `${mesAno} atualizado - ${qtdFaturas} fatura${qtdFaturas !== 1 ? 's' : ''}`,
+      };
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização do mês:', error);
+      return { success: false, mensagem: error.message || 'Erro desconhecido' };
+    }
+  }
+
+  /**
+   * Sincronizar leituras do servidor (todos os últimos meses)
+   * - Baixa faturas abertas completas (WatermelonDB)
+   * - Salva resumo de faturas fechadas (AsyncStorage para cards)
+   */
+  async syncLeituras(): Promise<{ success: boolean; mensagem: string }> {
+    try {
+      console.log('🔄 Iniciando sincronização de leituras...');
+
+      // 1. Buscar faturas do servidor (últimos 3 meses)
+      const response = await axios.get('/faturamensal/app/leituras');
       
-      // Atraso mínimo entre lotes
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-    
-    // Salvar o objeto atualizado (sem os que foram sincronizados)
-    await AsyncStorage.setItem('pendingLeituraUpdates', JSON.stringify(newPendingData));
-    await AsyncStorage.setItem('pendingLeiturasSyncs', JSON.stringify(syncStatus));
-    
-    // Chamar callback de conclusão, se existir
-    if (callbacks?.onComplete) {
-      callbacks.onComplete(true, syncedCount);
-    }
-    
-    // REMOVIDO: Log de conclusão da sincronização (sucesso normal)
-    
-    if (syncedCount > 0 && !syncCancelled) {
-      Toast.show({
-        type: 'success',
-        text1: 'Sincronização concluída',
-        text2: `${syncedCount} leituras sincronizadas com sucesso`,
-        visibilityTime: 3000,
+      // DEBUG: Log detalhado da resposta
+      console.log('📋 [DEBUG] Resposta completa da API:', {
+        status: response.status,
+        hasData: !!response.data,
+        dataKeys: response.data ? Object.keys(response.data) : [],
+        success: response.data?.success,
+        dataLength: response.data?.data?.length || 0
       });
+      
+      // CORREÇÃO: Verificar estrutura da resposta como no código antigo
+      if (!response.data || !response.data.success) {
+        console.error('❌ API retornou erro:', response.data?.message || 'Erro desconhecido');
+        console.error('📋 [DEBUG] Estrutura da resposta de erro:', response.data);
+        return { success: false, mensagem: response.data?.message || 'Erro na resposta da API' };
+      }
+
+      const faturasMeses: FaturaMes[] = response.data.data || [];
+      
+      // DEBUG: Log dos dados recebidos
+      console.log('📋 [DEBUG] Dados processados:', {
+        totalFaturas: faturasMeses.length,
+        amostra: faturasMeses.slice(0, 2) // Mostrar apenas 2 primeiros para debug
+      });
+
+      if (faturasMeses.length === 0) {
+        console.log('⚠️ API retornou sucesso mas nenhuma fatura encontrada');
+        return { success: false, mensagem: 'Nenhuma fatura encontrada no servidor' };
+      }
+
+      // 2. Separar faturas abertas e fechadas (CORREÇÃO: campo mudou)
+      const faturasAbertas = faturasMeses.filter((f) => f.isAllFechada === false);
+      const faturasFechadas = faturasMeses.filter((f) => f.isAllFechada === true);
+
+      console.log(`📊 Encontradas: ${faturasAbertas.length} abertas, ${faturasFechadas.length} fechadas`);
+
+      // 3. Salvar faturas ABERTAS no WatermelonDB
+      console.log('💾 Salvando faturas abertas...');
+      await this.saveFaturasAbertasToWatermelon(faturasAbertas);
+      console.log('✅ Faturas abertas salvas');
+
+      // 4. Salvar RESUMO de faturas fechadas no AsyncStorage (para cards)
+      console.log('💾 Salvando resumo de fechadas...');
+      await this.saveFaturasFechadasToCache(faturasFechadas);
+      console.log('✅ Resumo de fechadas salvo');
+
+      // 5. Limpar faturas que ficaram fechadas (apagar do WatermelonDB)
+      console.log('🧹 Limpando faturas fechadas do WatermelonDB...');
+      await this.cleanFechadasFromWatermelon(faturasFechadas);
+      console.log('✅ Faturas fechadas limpas');
+
+      // ✅ Observações já foram sincronizadas junto com as faturas em saveFaturasAbertasToWatermelon()
+
+      // Contar total de FATURAS (não meses)
+      const totalFaturasAbertas = faturasAbertas.reduce(
+        (total, mes) => total + (mes.faturas?.length || 0), 
+        0
+      );
+
+      const totalFaturasFechadas = faturasFechadas.reduce(
+        (total, mes) => total + (mes.faturas?.length || 0), 
+        0
+      );
+
+      // Montar mensagem completa e informativa com plural inteligente
+      const totalMeses = faturasAbertas.length + faturasFechadas.length;
+      let mensagem = '';
+      
+      if (faturasAbertas.length > 0 && faturasFechadas.length > 0) {
+        // Tem abertas e fechadas
+        mensagem = `${totalFaturasAbertas} aberta${totalFaturasAbertas !== 1 ? 's' : ''} + ${totalFaturasFechadas} fechada${totalFaturasFechadas !== 1 ? 's' : ''} - ${totalMeses} mês${totalMeses !== 1 ? 'es' : ''}`;
+      } else if (faturasAbertas.length > 0) {
+        // Só abertas
+        mensagem = `${totalFaturasAbertas} fatura${totalFaturasAbertas !== 1 ? 's' : ''} aberta${totalFaturasAbertas !== 1 ? 's' : ''} em ${faturasAbertas.length} mês${faturasAbertas.length !== 1 ? 'es' : ''}`;
+      } else if (faturasFechadas.length > 0) {
+        // Só fechadas
+        mensagem = `${totalFaturasFechadas} fatura${totalFaturasFechadas !== 1 ? 's' : ''} fechada${totalFaturasFechadas !== 1 ? 's' : ''} em ${faturasFechadas.length} mês${faturasFechadas.length !== 1 ? 'es' : ''}`;
+      } else {
+        mensagem = 'Nenhuma fatura para sincronizar';
+      }
+
+      return {
+        success: true,
+        mensagem,
+      };
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização:', error);
+      return { success: false, mensagem: error.message || 'Erro desconhecido' };
     }
-    
-    return { success: true, syncedCount };
-  } catch (error) {
-    console.error('Erro ao sincronizar leituras pendentes:', error);
-    
-    // Log de erro geral na sincronização
-    await LoggerService.getInstance().logSync('sync_error', false, { 
-      error_message: (error as any)?.message,
-      synced_count: 0,
-      operation: 'leituras_sync'
+  }
+
+  /**
+   * Sincronizar observações vigentes (MÉTODO OPCIONAL - NÃO USADO AUTOMATICAMENTE)
+   * 
+   * ⚠️ NOTA: As observações já são sincronizadas automaticamente junto com as faturas
+   * em saveFaturasAbertasToWatermelon(). Este método existe como fallback caso
+   * seja necessário sincronizar observações separadamente ou atualizar manualmente.
+   * 
+   * - Busca observações vigentes dos lotes que estão no WatermelonDB
+   * - Salva observações e comentários localmente
+   * - Útil para re-sincronizar apenas observações sem baixar todas as faturas novamente
+   */
+  async syncObservacoes(): Promise<{ success: boolean; mensagem: string }> {
+    try {
+      console.log('🔄 Iniciando sincronização de observações...');
+
+      // 1. Buscar IDs únicos de lotes que estão no banco local
+      const leiturasCollection = database.get('leituras');
+      const leituras = await leiturasCollection.query().fetch();
+
+      // Extrair lote_ids únicos das leituras locais
+      const loteIdsSet = new Set<number>();
+      leituras.forEach((leitura) => {
+        const loteId = (leitura as any).loteId;
+        if (loteId) {
+          loteIdsSet.add(loteId);
+        }
+      });
+
+      const loteIds = Array.from(loteIdsSet);
+
+      console.log(`📊 Encontrados ${leituras.length} leituras locais com ${loteIds.length} lotes únicos`);
+
+      if (loteIds.length === 0) {
+        console.log('⚠️ Nenhum lote encontrado localmente para sincronizar observações');
+        return { success: true, mensagem: 'Nenhum lote para sincronizar observações' };
+      }
+
+      console.log(`📋 Buscando observações para ${loteIds.length} lotes: [${loteIds.join(', ')}]`);
+
+      // 2. Buscar observações do servidor (apenas vigentes dos lotes baixados)
+      const response = await axios.get('/observacoes/app/download', {
+        params: {
+          lote_ids: loteIds.join(','),
+          status: 'vigente'
+        }
+      });
+
+      if (!response.data || !response.data.success) {
+        console.error('❌ API retornou erro:', response.data?.message || 'Erro desconhecido');
+        return { success: false, mensagem: response.data?.message || 'Erro na resposta da API' };
+      }
+
+      const observacoesData = response.data.data || [];
+
+      if (observacoesData.length === 0) {
+        console.log('✅ Nenhuma observação vigente encontrada');
+        return { success: true, mensagem: 'Nenhuma observação vigente' };
+      }
+
+      // 3. Salvar observações e comentários no WatermelonDB
+      await database.write(async () => {
+        const observacoesCollection = database.get('observacoes');
+        const comentariosCollection = database.get('observacoes_comentarios');
+
+        for (const obsData of observacoesData) {
+          // Verificar se observação já existe
+          const existing = await observacoesCollection
+            .query(Q.where('server_id', obsData.id))
+            .fetch();
+
+          let observacao: any;
+
+          if (existing.length > 0) {
+            // ATUALIZAR (mas só se não foi editada localmente)
+            observacao = existing[0];
+            if (observacao.syncStatus === 'synced') {
+              await observacao.update((record: any) => {
+                this.mapObservacaoServerData(record, obsData);
+                record.syncedAt = Date.now();
+              });
+            } else {
+              observacao = existing[0]; // Manter referência para sync de comentários
+            }
+          } else {
+            // CRIAR
+            observacao = await observacoesCollection.create((record: any) => {
+              this.mapObservacaoServerData(record, obsData);
+              record.syncStatus = 'synced';
+              record.syncedAt = Date.now();
+            });
+          }
+
+          // Sincronizar comentários desta observação
+          if (obsData.comentarios && Array.isArray(obsData.comentarios)) {
+            for (const comData of obsData.comentarios) {
+              const existingComentario = await comentariosCollection
+                .query(Q.where('server_id', comData.id))
+                .fetch();
+
+              if (existingComentario.length > 0) {
+                // ATUALIZAR comentário
+                const comentario = existingComentario[0];
+                if (comentario.syncStatus === 'synced') {
+                  await comentario.update((record: any) => {
+                    this.mapComentarioServerData(record, comData, observacao.id, obsData.id);
+                    record.syncedAt = Date.now();
+                  });
+                }
+              } else {
+                // CRIAR comentário
+                await comentariosCollection.create((record: any) => {
+                  this.mapComentarioServerData(record, comData, observacao.id, obsData.id);
+                  record.syncStatus = 'synced';
+                  record.syncedAt = Date.now();
+                });
+              }
+            }
+          }
+        }
+      });
+
+      const totalComentarios = observacoesData.reduce(
+        (total: number, obs: any) => total + (obs.comentarios?.length || 0),
+        0
+      );
+
+      const mensagem = `${observacoesData.length} observação${observacoesData.length !== 1 ? 'ões' : ''} + ${totalComentarios} comentário${totalComentarios !== 1 ? 's' : ''}`;
+
+      console.log(`✅ Sincronização concluída: ${mensagem}`);
+
+      return {
+        success: true,
+        mensagem,
+      };
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização de observações:', error);
+      return { success: false, mensagem: error.message || 'Erro desconhecido' };
+    }
+  }
+
+  /**
+   * Mapear dados de observação do servidor para record WatermelonDB
+   */
+  private mapObservacaoServerData(record: any, obsData: any) {
+    record.serverId = obsData.id;
+    record.loteId = obsData.lote_id;
+    record.tipo = obsData.tipo;
+    record.status = obsData.status;
+    record.titulo = obsData.titulo;
+    record.descricao = obsData.descricao || '';
+    record.usuarioCriadorId = obsData.usuario_criador_id;
+    record.usuarioCriadorNome = obsData.criador?.nome || '';
+    record.usuarioFinalizadorId = obsData.usuario_finalizador_id || null;
+    record.usuarioFinalizadorNome = obsData.finalizador?.nome || '';
+    record.dataFinalizacao = obsData.data_finalizacao ? new Date(obsData.data_finalizacao).getTime() : null;
+  }
+
+  /**
+   * Mapear dados de comentário do servidor para record WatermelonDB
+   */
+  private mapComentarioServerData(record: any, comData: any, observacaoLocalId: string, observacaoServerId: number) {
+    record.serverId = comData.id;
+    record.observacaoId = observacaoLocalId; // WatermelonDB ID local
+    record.observacaoServerId = observacaoServerId; // ID do servidor
+    record.comentario = comData.comentario;
+    record.usuarioId = comData.usuario_id;
+    record.usuarioNome = comData.usuario?.nome || '';
+  }
+
+  /**
+   * Salvar faturas abertas no WatermelonDB
+   * ✅ Também processa e salva observações vigentes que vêm junto com as faturas
+   */
+  private async saveFaturasAbertasToWatermelon(faturas: FaturaMes[]) {
+    await database.write(async () => {
+      const leiturasCollection = database.get('leituras');
+      const observacoesCollection = database.get('observacoes');
+      const comentariosCollection = database.get('observacoes_comentarios');
+
+      // Contadores para log final
+      let totalObservacoes = 0;
+      let totalComentarios = 0;
+
+      for (const faturaMes of faturas) {
+        // CORREÇÃO: Validar se faturas existe e é um array
+        if (!faturaMes.faturas || !Array.isArray(faturaMes.faturas)) {
+          console.warn(`⚠️ Faturas não encontradas ou inválidas para ${faturaMes.mesAno}`);
+          continue;
+        }
+
+        for (const faturaData of faturaMes.faturas) {
+          // Validar se faturaData tem ID
+          if (!faturaData || !faturaData.id) {
+            console.warn(`⚠️ Fatura inválida encontrada em ${faturaMes.mesAno}`);
+            continue;
+          }
+
+          // Verificar se já existe
+          const existing = await leiturasCollection
+            .query(Q.where('server_id', faturaData.id))
+            .fetch();
+
+          if (existing.length > 0) {
+            // ATUALIZAR (mas só se não foi editado localmente)
+            const leitura = existing[0];
+            if (leitura.syncStatus === 'synced') {
+              await leitura.update((record: any) => {
+                this.mapServerDataToRecord(record, faturaData, faturaMes);
+                record.lastSyncAt = Date.now();
+              });
+              // Fatura atualizada silenciosamente
+            }
+          } else {
+            // CRIAR
+            await leiturasCollection.create((record: any) => {
+              this.mapServerDataToRecord(record, faturaData, faturaMes);
+              record.syncStatus = 'synced';
+              record.hasLocalImage = false;
+              record.lastSyncAt = Date.now();
+            });
+          }
+
+          // ✅ PROCESSAR OBSERVAÇÕES que vêm junto com a fatura
+          if (faturaData.LoteAgricola?.Observacoes && Array.isArray(faturaData.LoteAgricola.Observacoes)) {
+            for (const obsData of faturaData.LoteAgricola.Observacoes) {
+              // Verificar se observação já existe
+              const existingObs = await observacoesCollection
+                .query(Q.where('server_id', obsData.id))
+                .fetch();
+
+              let observacao: any;
+
+              if (existingObs.length > 0) {
+                // ATUALIZAR (mas só se não foi editada localmente)
+                observacao = existingObs[0];
+                if (observacao.syncStatus === 'synced') {
+                  await observacao.update((record: any) => {
+                    this.mapObservacaoServerData(record, obsData);
+                    record.syncedAt = Date.now();
+                  });
+                }
+              } else {
+                // CRIAR
+                observacao = await observacoesCollection.create((record: any) => {
+                  this.mapObservacaoServerData(record, obsData);
+                  record.syncStatus = 'synced';
+                  record.syncedAt = Date.now();
+                });
+                totalObservacoes++;
+              }
+
+              // Sincronizar comentários desta observação
+              if (obsData.comentarios && Array.isArray(obsData.comentarios)) {
+                for (const comData of obsData.comentarios) {
+                  const existingCom = await comentariosCollection
+                    .query(Q.where('server_id', comData.id))
+                    .fetch();
+
+                  if (existingCom.length === 0) {
+                    // CRIAR comentário
+                    await comentariosCollection.create((record: any) => {
+                      this.mapComentarioServerData(record, comData, observacao.id, obsData.id);
+                      record.syncStatus = 'synced';
+                      record.syncedAt = Date.now();
+                    });
+                    totalComentarios++;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Log final consolidado
+      if (totalObservacoes > 0 || totalComentarios > 0) {
+        console.log(`💬 Sincronizadas ${totalObservacoes} observação(ões) + ${totalComentarios} comentário(s) junto com as faturas`);
+      }
     });
-    
-    // Chamar callback de conclusão com erro, se existir
-    if (callbacks?.onComplete) {
-      callbacks.onComplete(false, 0);
-    }
-    
-    return { success: false, syncedCount: 0 };
   }
-};
-// Função para cancelar sincronização em andamento
-export const cancelSync = () => {
-  syncCancelled = true;
-};
 
-/* Adicionar função para verificar e iniciar sincronização
-export const checkAndSync = async (): Promise<void> => {
-  try {
-    // Verificar se há conexão
-    const netInfo = await NetInfo.fetch();
-    if (!netInfo.isConnected) {
+  /**
+   * Mapear dados do servidor para record WatermelonDB
+   * ✅ VERSÃO SIMPLIFICADA: Apenas campos essenciais
+   */
+  private mapServerDataToRecord(record: any, faturaData: any, faturaMes: FaturaMes) {
+    // Validar se mesAno existe
+    if (!faturaMes.mesAno) {
+      console.warn(`⚠️ MesAno não encontrado no mapeamento de dados`);
       return;
     }
-    
-    // Verificar timestamp de última sincronização
-    const ultimaSincronizacao = await AsyncStorage.getItem('leituras_ultima_sincronizacao');
-    if (ultimaSincronizacao) {
-      const ultimaData = new Date(ultimaSincronizacao).getTime();
-      const agora = new Date().getTime();
-      const duasHorasEmMS = 2 * 60 * 60 * 1000;
-      
-      // Se não passou o tempo mínimo, não sincroniza
-      if ((agora - ultimaData) <= duasHorasEmMS) {
-        return;
-      }
-    }
-    
-    // Verificar se há atualizações pendentes
-    const pendingDataStr = await AsyncStorage.getItem('pendingLeituraUpdates');
-    if (!pendingDataStr) {
+
+    // Extrair mes e ano do campo mesAno "10/2025"
+    const [mes, ano] = faturaMes.mesAno.split('/');
+
+    // Validar se mês e ano são válidos
+    if (!mes || !ano || isNaN(parseInt(ano))) {
+      console.warn(`⚠️ MesAno inválido no mapeamento: ${faturaMes.mesAno}`);
       return;
     }
+
+    // Mapeamento de dados da fatura para o registro local
+
+    // ✅ IDENTIFICAÇÃO
+    record.serverId = faturaData.id; // ID da fatura
+    record.leituraBackendId = faturaData.Leitura?.id || null; // ✅ ID da leitura no backend (para upload de imagem)
+    record.mesReferencia = mes;
+    record.anoReferencia = parseInt(ano);
+
+    // ✅ DADOS ESSENCIAIS PARA EXIBIÇÃO NA TELA
+    record.loteId = faturaData.LoteAgricola?.id || 0; // ✅ ID do lote no servidor (para vincular com observações)
+    record.loteNome = faturaData.LoteAgricola?.nomeLote || '';
+    record.loteSituacao = faturaData.LoteAgricola?.situacao || 'Operacional';
+    record.loteMapaLeitura = faturaData.LoteAgricola?.mapa_leitura || null;
+    record.irriganteNome = faturaData.Cliente?.nome || '';
+    record.hidrometroCodigo = faturaData.Hidrometro?.codHidrometro || 'N/D';
+    record.hidrometroX10 = faturaData.Hidrometro?.x10 === true; // FLAG CRÍTICA!
+
+    // ✅ DADOS ESSENCIAIS PARA UPLOAD
+    record.leituraAtual = faturaData.Leitura?.leitura || 0;
+    record.dataLeitura = faturaData.Leitura?.data_leitura || null;
+
+    // ✅ DADOS PARA EXIBIÇÃO/COMPARAÇÃO
+    record.leituraAnterior = faturaData.leitura_anterior || 0;
+    record.dataLeituraAnterior = faturaData.data_leitura_anterior || null;
     
-    const pendingData = JSON.parse(pendingDataStr);
-    const pendingCount = Object.keys(pendingData).length;
+    // ✅ CORREÇÃO CRÍTICA: Calcular consumo localmente se não vier da API
+    // A API pode retornar valor_leitura_m3 = 0 para leituras não informadas
+    const consumoAPI = faturaData.valor_leitura_m3 || 0;
+    const leituraAtualValue = faturaData.Leitura?.leitura || 0;
+    const leituraAnteriorValue = faturaData.leitura_anterior || 0;
     
-    if (pendingCount > 0) {
-      // Mostrar toast informativo discreto
-      Toast.show({
-        type: 'info',
-        text1: 'Sincronizando em segundo plano',
-        text2: `Enviando ${pendingCount} leituras pendentes...`,
-        visibilityTime: 2000,
-      });
-      
-      // Iniciar sincronização
-      const resultado = await syncPendingLeituras();
-      
-      // Registrar timestamp de sincronização bem-sucedida
-      if (resultado.success) {
-        await AsyncStorage.setItem('leituras_ultima_sincronizacao', new Date().toISOString());
-      }
-    }
-  } catch (error) {
-    console.error('Erro ao verificar sincronização:', error);
+    // Se tiver leitura atual informada, calcular consumo
+    const consumoCalculado = leituraAtualValue > 0 
+      ? leituraAtualValue - leituraAnteriorValue 
+      : consumoAPI;
+    
+    record.consumo = consumoCalculado;
+    record.valorLeituraM3 = consumoCalculado;
+    record.imagemUrl = faturaData.Leitura?.imagem_leitura || null;
+    
+    // ✅ CAMPOS DE ESTADO/STATUS
+    record.fechada = faturaMes.isAllFechada ? 'Sim' : 'Não';
+    record.status = faturaData.status || 'Pendente';
   }
-};*/
+
+  /**
+   * Salvar RESUMO de faturas fechadas no AsyncStorage (cache visual para cards)
+   */
+  private async saveFaturasFechadasToCache(faturas: FaturaMes[]) {
+    for (const faturaMes of faturas) {
+      // Validar se mesAno existe
+      if (!faturaMes.mesAno) {
+        console.warn(`⚠️ MesAno não encontrado para fatura fechada`);
+        continue;
+      }
+
+      // Extrair mes e ano do mesAno "10/2025"
+      const [mes, ano] = faturaMes.mesAno.split('/');
+      const key = `leituras_resumo_${mes}_${ano}`;
+      
+      // CORREÇÃO: Validar se faturas existe antes de acessar length
+      const totalLeituras = faturaMes.faturas && Array.isArray(faturaMes.faturas) 
+        ? faturaMes.faturas.length 
+        : 0;
+
+      const resumo = {
+        mes,
+        ano: parseInt(ano),
+        fechada: faturaMes.isAllFechada ? 'Sim' : 'Não',
+        totalLeituras,
+        mesAno: faturaMes.mesAno,
+        volumeTotal: faturaMes.volumeTotal || 0,
+        leiturasInformadas: faturaMes.leiturasInformadas || 0,
+      };
+      await AsyncStorage.setItem(key, JSON.stringify(resumo));
+      console.log(`💾 Resumo de ${faturaMes.mesAno} salvo no cache`);
+    }
+
+    // Salvar índice de meses fechados (filtrar apenas os válidos)
+    const mesesFechados = faturas
+      .filter((f) => f && f.mesAno)
+      .map((f) => f.mesAno);
+    await AsyncStorage.setItem('leituras_meses_fechados_index', JSON.stringify(mesesFechados));
+  }
+
+  /**
+   * Limpar faturas que ficaram fechadas do WatermelonDB
+   */
+  private async cleanFechadasFromWatermelon(faturasFechadas: FaturaMes[]) {
+    await database.write(async () => {
+      const leiturasCollection = database.get('leituras');
+
+      for (const fatura of faturasFechadas) {
+        // Validar se mesAno existe
+        if (!fatura.mesAno) {
+          console.warn(`⚠️ MesAno não encontrado para limpeza de fatura fechada`);
+          continue;
+        }
+
+        // CORREÇÃO: Extrair mês e ano do mesAno
+        const [mes, ano] = fatura.mesAno.split('/');
+        
+        // Validar se mês e ano são válidos
+        if (!mes || !ano || isNaN(parseInt(ano))) {
+          console.warn(`⚠️ MesAno inválido para limpeza: ${fatura.mesAno}`);
+          continue;
+        }
+        
+        const leiturasFechadas = await leiturasCollection
+          .query(
+            Q.where('mes_referencia', mes),
+            Q.where('ano_referencia', parseInt(ano))
+          )
+          .fetch();
+
+        for (const leitura of leiturasFechadas) {
+          await leitura.markAsDeleted(); // Soft delete
+          console.log(`🗑️ Leitura ${(leitura as any).serverId} removida (fatura fechada)`);
+        }
+      }
+    });
+  }
+}
+
+export default new SyncService();

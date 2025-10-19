@@ -15,21 +15,20 @@ import Toast from "react-native-toast-message";
 const { width } = Dimensions.get("window");
 const isTablet = width > 600;
 
-// Interface para as propriedades do componente - Adicionando props corretamente
+// Interface para as propriedades do componente
 interface LeituraCardProps {
   mesAno: string;
   leiturasInformadas: number;
   totalLeituras: number;
   volumeTotal: number;
-  dataCriacao: string;
   faturas: any[];
   onPress: () => void;
   isEmpty?: boolean;
   isAllFechada: boolean;
   temDadosPendentes?: boolean;
-  onSincronizar?: () => void;
-  volumePositivo?: number; // Nova prop
-  temConsumosNegativos?: boolean; // Nova prop
+  volumePositivo?: number;
+  temConsumosNegativos?: boolean;
+  lastUpdate?: string;
 }
 
 const LeituraCard: React.FC<LeituraCardProps> = ({
@@ -37,18 +36,20 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
   leiturasInformadas,
   totalLeituras,
   volumeTotal,
-  dataCriacao,
   faturas,
   onPress,
   isEmpty = false,
   isAllFechada,
   temDadosPendentes = false,
-  onSincronizar,
-  volumePositivo, // Desestruturar corretamente
-  temConsumosNegativos = false, // Valor padrão
+  volumePositivo,
+  temConsumosNegativos = false,
+  lastUpdate,
 }) => {
-  // Usar volumePositivo recebido via props ou fallback para volumeTotal
-  const volumeFinal = volumePositivo !== undefined ? volumePositivo : volumeTotal;
+  // ✅ CORREÇÃO: Para faturas fechadas, sempre usar volumeTotal (do resumo da API)
+  // Para faturas abertas, usar volumePositivo (calculado) ou fallback para volumeTotal
+  const volumeFinal = isAllFechada 
+    ? volumeTotal 
+    : (volumePositivo !== undefined ? volumePositivo : volumeTotal);
 
   // Verificar se é um card vazio
   if (isEmpty) {
@@ -62,16 +63,13 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
     );
   }
 
-  // Formatar data de criação
-  const dataFormatada = new Date(dataCriacao).toLocaleDateString("pt-BR");
-
   return (
     <TouchableOpacity
       style={[
         styles.card,
         {
           borderLeftWidth: 4,
-          borderLeftColor: isAllFechada ? "#2a9d8f" : "transparent",
+          borderLeftColor: isAllFechada ? "#2a9d8f" : "#ffd700", // Verde para fechadas, Amarelo para abertas
         },
       ]}
       onPress={onPress}
@@ -85,23 +83,42 @@ const LeituraCard: React.FC<LeituraCardProps> = ({
       )}
       
       <View style={styles.cardHeader}>
-        <Text style={styles.title}>Leituras {formatMesAno(mesAno)}</Text>
-        <Text style={styles.subtitle}>Criado em: {dataFormatada}</Text>
-        
-        {/* Badge de sincronização */}
-        {temDadosPendentes && (
-          <TouchableOpacity 
-            style={styles.syncBadge}
-            onPress={(e) => {
-              e.stopPropagation(); // Evitar que o card seja aberto
-              if (onSincronizar) onSincronizar();
-            }}
-          >
-            <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-            <Text style={styles.syncBadgeText}>Sincronizar</Text>
-          </TouchableOpacity>
+        <View style={styles.titleContainer}>
+          <Text style={styles.title}>
+            Leituras {formatMesAno(mesAno)}
+          </Text>
+        </View>
+
+        {/* Badge informativo de status - apenas para faturas abertas */}
+        {!isAllFechada && (
+          <View style={[styles.syncBadge, temDadosPendentes && styles.syncBadgePending]}>
+            <Ionicons
+              name={temDadosPendentes ? "cloud-upload-outline" : "checkmark-circle-outline"}
+              size={18}
+              color="#fff"
+            />
+            <Text style={styles.syncBadgeText}>
+              {temDadosPendentes ? "Pendente" : "Sincronizado"}
+            </Text>
+          </View>
         )}
+
       </View>
+
+      {/* Indicador de última atualização - apenas para faturas abertas */}
+      {!isAllFechada && lastUpdate && !temDadosPendentes && (
+        <View style={styles.lastUpdateIndicator}>
+          <Ionicons name="time-outline" size={11} color="#999" />
+          <Text style={styles.lastUpdateText}>
+            {new Date(lastUpdate).toLocaleString('pt-BR', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
@@ -205,11 +222,20 @@ const styles = StyleSheet.create({
   },
   cardHeader: {
     marginBottom: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  titleContainer: {
+    flex: 1,
+    flexShrink: 1,
   },
   title: {
-    fontSize: isTablet ? 24 : 20,
+    fontSize: isTablet ? 24 : 18,
     fontWeight: "bold",
     color: "#333",
+    lineHeight: isTablet ? 28 : 24,
   },
   subtitle: {
     fontSize: isTablet ? 14 : 12,
@@ -265,10 +291,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   syncBadge: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    backgroundColor: '#ff9800', // Laranja
+    backgroundColor: '#2a9d8f', // Verde por padrão (modo atualizar)
     borderRadius: 20,
     flexDirection: 'row',
     alignItems: 'center',
@@ -280,11 +303,29 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 3,
+    flexShrink: 0,
+    marginTop: isTablet ? 0 : 2,
+  },
+  syncBadgePending: {
+    backgroundColor: '#ff9800', // Laranja quando tem pendências
   },
   syncBadgeText: {
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  lastUpdateIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 3,
+    paddingHorizontal: 4,
+    marginTop: -12,
+    marginBottom: 8,
+  },
+  lastUpdateText: {
+    fontSize: 10,
+    color: '#999',
   },
   
   // Novos estilos para os alertas de consumos negativos
