@@ -1082,9 +1082,13 @@ const LeiturasDetalhesScreen: React.FC = () => {
     // Armazenar o valor original para uso posterior em caso de cancelamento
     const fatura = faturasSelecionadas.find((f) => f.id === faturaId);
     if (fatura) {
+      // ✅ CORREÇÃO: Verificação segura antes de chamar toString()
+      const leituraValue = fatura.Leitura?.leitura;
       setValoresOriginais((prev) => ({
         ...prev,
-        [faturaId]: fatura.Leitura?.leitura.toString() || "",
+        [faturaId]: (leituraValue !== null && leituraValue !== undefined) 
+          ? leituraValue.toString() 
+          : "",
       }));
 
       setLeituraAtuais((prev) => ({
@@ -1642,15 +1646,21 @@ const LeiturasDetalhesScreen: React.FC = () => {
 
   // Função chamada quando uma imagem é adicionada ou removida
   const handleImagemUploaded = (faturaId: number, hasImage: boolean = true) => {
-    // ✅ Atualizar a fatura no contexto para que useMemo recalcule
+    // ✅ CORREÇÃO: Verificar se Leitura existe antes de fazer spread
     const faturasAtualizadas = faturasSelecionadas.map(f => 
       f.id === faturaId 
         ? { 
             ...f, 
-            Leitura: { 
-              ...f.Leitura, 
-              imagem_leitura: hasImage ? 'local' : null 
-            } 
+            Leitura: f.Leitura 
+              ? { 
+                  ...f.Leitura, 
+                  imagem_leitura: hasImage ? 'local' : null 
+                }
+              : {
+                  leitura: undefined,
+                  data_leitura: undefined,
+                  imagem_leitura: hasImage ? 'local' : null
+                }
           }
         : f
     );

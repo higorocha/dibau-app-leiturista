@@ -4,6 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import { router } from 'expo-router';
 import api from '../api/axiosConfig';
+import NetInfo from '@react-native-community/netinfo';
+import Toast from 'react-native-toast-message';
 import LoggerService from '../services/LoggerService';
 
 // Debug helper para banco de dados (desenvolvimento)
@@ -119,11 +121,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setUser(null);
           }
         } else {
-          console.log('[AUTH] Token inválido ou expirado - limpando dados expirados');
-          // Só limpar se for realmente inválido/expirado
-          if (token) await AsyncStorage.removeItem('dibau_token');
-          if (userData) await AsyncStorage.removeItem('dibau_user');
-          setUser(null);
+          // Token inválido/expirado. Respeitar modo offline: nunca deslogar se offline
+          const netInfo = await NetInfo.fetch();
+          if (!netInfo.isConnected) {
+            console.log('[AUTH] Token inválido/expirado, porém OFFLINE – mantendo sessão local (modo offline)');
+            Toast.show({
+              type: 'info',
+              text1: 'Modo offline ativo',
+              text2: 'Sessão preservada. Faça login quando reconectar.',
+              visibilityTime: 4000
+            });
+            try {
+              if (userData) {
+                const parsedUser = JSON.parse(userData);
+                setUser(parsedUser);
+              }
+              // Não limpar token/user; manter headers para operação local
+              if (token) {
+                api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+              }
+            } catch (e) {
+              console.error('[AUTH] Erro ao manter sessão offline:', e);
+              // Mesmo com erro de parse, não limpar storage se offline
+              setUser(null);
+            }
+          } else {
+            console.log('[AUTH] Token inválido ou expirado - limpando dados (online)');
+            if (token) await AsyncStorage.removeItem('dibau_token');
+            if (userData) await AsyncStorage.removeItem('dibau_user');
+            setUser(null);
+          }
         }
       } catch (error) {
         console.error('[AUTH] Erro ao restaurar autenticação:', error);

@@ -7,6 +7,10 @@ import Log from '../database/models/Log';
 import Observacao from '../database/models/Observacao';
 import ObservacaoComentario from '../database/models/ObservacaoComentario';
 import * as FileSystem from 'expo-file-system';
+import NetInfo from '@react-native-community/netinfo';
+import { Alert } from 'react-native';
+import { router } from 'expo-router';
+import Toast from 'react-native-toast-message';
 
 export interface UploadProgress {
   leiturasTotal: number;
@@ -26,6 +30,35 @@ export interface UploadProgress {
 
 class UploadService {
   private progressCallback?: (progress: UploadProgress) => void;
+
+  private async handleAuthErrorIfNeeded(error: any) {
+    const status = error?.response?.status;
+    if (status !== 401) return;
+
+    const netInfo = await NetInfo.fetch().catch(() => null);
+    const isOnline = !!netInfo?.isConnected;
+
+    if (!isOnline) {
+      // Offline: mensagem já padronizada
+      Toast.show({
+        type: 'info',
+        text1: 'Sem internet',
+        text2: 'Sessão preservada. Transmissão exige conexão.',
+        visibilityTime: 4000
+      });
+      return;
+    }
+
+    // Online: oferecer login
+    Alert.alert(
+      'Sessão expirada',
+      'Sua sessão expirou. Deseja fazer login agora para transmitir?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Fazer login', style: 'default', onPress: () => router.replace('/login') }
+      ]
+    );
+  }
 
   /**
    * Fazer upload manual de todas as pendências
@@ -121,6 +154,8 @@ class UploadService {
       } catch (error: any) {
         const leituraData = leitura as any;
         console.error(`❌ Erro ao enviar leitura ${leituraData.serverId}:`, error.message);
+
+        await this.handleAuthErrorIfNeeded(error);
 
         await database.write(async () => {
           await leitura.update((record: any) => {
@@ -247,6 +282,7 @@ class UploadService {
       } catch (error: any) {
         const imagemData = imagem as any;
         console.error(`❌ [UPLOAD] Erro ao enviar imagem ${imagemData.leituraServerId}:`, error);
+        await this.handleAuthErrorIfNeeded(error);
         console.error(`❌ [UPLOAD] Stack trace:`, error.stack);
         console.error(`❌ [UPLOAD] Detalhes do erro:`, {
           message: error.message,
@@ -434,6 +470,8 @@ class UploadService {
       console.log(`✅ [SYNC UNIFICADO] Concluído: ${progress.observacoesEnviadas} obs + ${progress.comentariosEnviados} com enviados`);
     } catch (error: any) {
       console.error(`❌ [SYNC UNIFICADO] Erro crítico:`, error.message);
+
+      await this.handleAuthErrorIfNeeded(error);
 
       // Marcar TODAS as observações e comentários pendentes como erro
       for (const obs of observacoesPendentes) {

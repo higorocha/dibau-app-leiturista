@@ -3,6 +3,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import LoggerService from '../services/LoggerService';
+import Toast from 'react-native-toast-message';
 
 // ========================================
 // 🔧 CONFIGURAÇÃO DE AMBIENTES
@@ -13,16 +14,16 @@ type Environment = 'development' | 'preview' | 'production';
 // - 'development': Rede local (192.168.1.144:5001)
 // - 'preview': Ngrok para testes externos
 // - 'production': Servidor de produção (Render)
-const currentEnv: Environment = 'development';
+const currentEnv: Environment = 'preview';
 
 // 🌐 URLs para cada ambiente
 const config = {
   // Desenvolvimento: Rede local
-  development: 'http://192.168.1.144:5001',
+  development: 'http://192.168.1.138:5001',
 
   // Preview: Ngrok (URL ativa)
-  preview: 'https://reissuable-oda-conscionably.ngrok-free.dev',
-
+  //preview: 'https://reissuable-oda-conscionably.ngrok-free.dev',
+    preview: 'https://sistema-irrigacao-backend.onrender.com',
   // Produção: Servidor Render
   production: 'https://sistema-irrigacao-backend.onrender.com'
 };
@@ -321,7 +322,20 @@ api.interceptors.response.use(
       // Só limpar dados de autenticação se for erro específico de login
       // ou se for uma tentativa de verificação de autenticação
       if (requestUrl.includes('/login') || requestUrl.includes('/auth/verify')) {
-        console.log('[API] Erro 401 em endpoint de autenticação - limpando dados');
+        // Respeitar modo offline: nunca deslogar se offline
+        const netInfoAuth = await NetInfo.fetch().catch(() => null);
+        if (netInfoAuth && netInfoAuth.isConnected === false) {
+          console.log('[API] 401 em autenticação, porém OFFLINE – não limpar dados nem deslogar');
+          Toast.show({
+            type: 'info',
+            text1: 'Modo offline ativo',
+            text2: 'Sessão preservada. Faça login quando reconectar.',
+            visibilityTime: 4000
+          });
+          error.authenticationError = true;
+          return Promise.reject(error);
+        }
+        console.log('[API] Erro 401 em endpoint de autenticação - limpando dados (online)');
         
         await logger.warning(
           'Erro de autenticação em endpoint de login',

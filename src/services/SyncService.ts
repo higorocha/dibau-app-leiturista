@@ -5,6 +5,10 @@ import Leitura from '../database/models/Leitura';
 import Observacao from '../database/models/Observacao';
 import ObservacaoComentario from '../database/models/ObservacaoComentario';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { Alert } from 'react-native';
+import { router } from 'expo-router';
+import Toast from 'react-native-toast-message';
 
 interface FaturaMes {
   mesAno: string; // Campo mudou de mes/ano separados para mesAno
@@ -21,6 +25,32 @@ interface FaturaMes {
 }
 
 class SyncService {
+  private async handleAuthErrorIfNeeded(error: any) {
+    const status = error?.response?.status;
+    if (status !== 401) return;
+
+    const netInfo = await NetInfo.fetch().catch(() => null);
+    const isOnline = !!netInfo?.isConnected;
+
+    if (!isOnline) {
+      Toast.show({
+        type: 'info',
+        text1: 'Sem internet',
+        text2: 'Sessão preservada. Sincronização exige conexão.',
+        visibilityTime: 4000
+      });
+      return;
+    }
+
+    Alert.alert(
+      'Sessão expirada',
+      'Sua sessão expirou. Deseja fazer login agora para sincronizar?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Fazer login', style: 'default', onPress: () => router.replace('/login') }
+      ]
+    );
+  }
   /**
    * Sincronizar apenas um mês específico
    */
@@ -53,12 +83,17 @@ class SyncService {
       }
 
       const qtdFaturas = faturaMes.faturas?.length || 0;
+
+      // ✅ Atualizar timestamp de sincronização
+      await AsyncStorage.setItem('leituras_timestamp', new Date().toISOString());
+
       return {
         success: true,
         mensagem: `${mesAno} atualizado - ${qtdFaturas} fatura${qtdFaturas !== 1 ? 's' : ''}`,
       };
     } catch (error: any) {
       console.error('❌ Erro na sincronização do mês:', error);
+      await this.handleAuthErrorIfNeeded(error);
       return { success: false, mensagem: error.message || 'Erro desconhecido' };
     }
   }
@@ -155,12 +190,16 @@ class SyncService {
         mensagem = 'Nenhuma fatura para sincronizar';
       }
 
+      // ✅ Atualizar timestamp de sincronização
+      await AsyncStorage.setItem('leituras_timestamp', new Date().toISOString());
+
       return {
         success: true,
         mensagem,
       };
     } catch (error: any) {
       console.error('❌ Erro na sincronização:', error);
+      await this.handleAuthErrorIfNeeded(error);
       return { success: false, mensagem: error.message || 'Erro desconhecido' };
     }
   }
@@ -295,12 +334,16 @@ class SyncService {
 
       console.log(`✅ Sincronização concluída: ${mensagem}`);
 
+      // ✅ Atualizar timestamp de sincronização
+      await AsyncStorage.setItem('leituras_timestamp', new Date().toISOString());
+
       return {
         success: true,
         mensagem,
       };
     } catch (error: any) {
       console.error('❌ Erro na sincronização de observações:', error);
+      await this.handleAuthErrorIfNeeded(error);
       return { success: false, mensagem: error.message || 'Erro desconhecido' };
     }
   }
